@@ -1,4 +1,3 @@
-import numpy as np
 import pytest
 
 import nes._opcodes_6502 as opcodes
@@ -13,10 +12,10 @@ class CPU:
         self._fetched = 0x00
         self._addr_abs = 0x0000
         self._addr_rel = 0x00
-        self.ram = np.zeros(64 * 1024, dtype=np.uint8)
+        self.ram = [0x00] * (64 * 1024)
         self.ram[0:10] = [0xA8, 0xA7, 0xA6, 0xA5, 0xA4, 0xA3, 0xFF, 0xA1, 0xA0, 0x02]
 
-    def read(self, addr):
+    def cpu_read(self, addr):
         print(f'reading from {addr} = {hex(self.ram[addr])}')
         return self.ram[addr]
 

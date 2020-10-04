@@ -1,10 +1,10 @@
 from cpu_6502 import CPU6502
-from nes.flags_6502 import FLAGS6502
+from flags_6502 import Flags6502
 
 
 # Addressing Modes
 def IMP(cpu: CPU6502):
-    cpu._fetched = cpu.a
+    cpu._implied = cpu.a
     return 0
 
 
@@ -15,28 +15,28 @@ def IMM(cpu: CPU6502):
 
 
 def ZP0(cpu: CPU6502):
-    cpu._addr_abs = cpu.read(cpu.pc)
+    cpu._addr_abs = cpu.cpu_read(cpu.pc)
     cpu.pc += 1
     cpu._addr_abs &= 0x00ff
     return 0
 
 
 def ZPX(cpu: CPU6502):
-    cpu._addr_abs = cpu.read(cpu.pc) + cpu.x
+    cpu._addr_abs = cpu.cpu_read(cpu.pc) + cpu.x
     cpu.pc += 1
     cpu._addr_abs &= 0x00ff
     return 0
 
 
 def ZPY(cpu: CPU6502):
-    cpu._addr_abs = cpu.read(cpu.pc) + cpu.y
+    cpu._addr_abs = cpu.cpu_read(cpu.pc) + cpu.y
     cpu.pc += 1
     cpu._addr_abs &= 0x00ff
     return 0
 
 
 def REL(cpu: CPU6502):
-    cpu._addr_rel = cpu.read(cpu.pc)
+    cpu._addr_rel = cpu.cpu_read(cpu.pc)
     cpu.pc += 1
     if cpu._addr_rel & 0x80:
         cpu._addr_rel |= 0xff00
@@ -44,21 +44,33 @@ def REL(cpu: CPU6502):
     return 0
 
 
+# before read 2
+# 93578	0.0831	8.881e-07	0.2518	2.69e-06	_opcodes_6502.py:339(LDA)
+# 96309	0.07966	8.271e-07	0.2301	2.389e-06	_opcodes_6502.py:47(ABS)
+# 96474	0.05889	6.105e-07	0.1346	1.395e-06	_opcodes_6502.py:38(REL)
+# 93578	0.04488	4.796e-07	0.1146	1.225e-06	_opcodes_6502.py:210(BPL)
+# 3.1016180515289307 633599.2915153658
+# Frame count: 22 FPS: 7.093071949705473
+#
+# 96309	0.0554	5.752e-07	0.1474	1.53e-06	_opcodes_6502.py:54(ABS)
 def ABS(cpu: CPU6502):
-    lo = cpu.read(cpu.pc)
-    cpu.pc += 1
-    hi = cpu.read(cpu.pc)
-    cpu.pc += 1
+    # lo = cpu.cpu_read(cpu.pc)
+    # cpu.pc += 1
+    # hi = cpu.cpu_read(cpu.pc)
+    # cpu.pc += 1
+    lo, hi = cpu.cpu_read_2(cpu.pc)
+    cpu.pc += 2
     cpu._addr_abs = (hi << 8) | lo
     return 0
 
 
 def ABX(cpu: CPU6502):
-    lo = cpu.read(cpu.pc)
-    cpu.pc += 1
-    hi = cpu.read(cpu.pc)
-    cpu.pc += 1
-
+    # lo = cpu.cpu_read(cpu.pc)
+    # cpu.pc += 1
+    # hi = cpu.cpu_read(cpu.pc)
+    # cpu.pc += 1
+    lo, hi = cpu.cpu_read_2(cpu.pc)
+    cpu.pc += 2
     cpu._addr_abs = (hi << 8) | lo
     cpu._addr_abs += cpu.x
 
@@ -69,11 +81,12 @@ def ABX(cpu: CPU6502):
 
 
 def ABY(cpu: CPU6502):
-    lo = cpu.read(cpu.pc)
-    cpu.pc += 1
-    hi = cpu.read(cpu.pc)
-    cpu.pc += 1
-
+    # lo = cpu.cpu_read(cpu.pc)
+    # cpu.pc += 1
+    # hi = cpu.cpu_read(cpu.pc)
+    # cpu.pc += 1
+    lo, hi = cpu.cpu_read_2(cpu.pc)
+    cpu.pc += 2
     cpu._addr_abs = (hi << 8) | lo
     cpu._addr_abs += cpu.y
 
@@ -84,38 +97,40 @@ def ABY(cpu: CPU6502):
 
 
 def IND(cpu: CPU6502):
-    ptr_lo = cpu.read(cpu.pc)
-    cpu.pc += 1
-    ptr_hi = cpu.read(cpu.pc)
-    cpu.pc += 1
+    # ptr_lo = cpu.cpu_read(cpu.pc)
+    # cpu.pc += 1
+    # ptr_hi = cpu.cpu_read(cpu.pc)
+    # cpu.pc += 1
 
+    ptr_lo, ptr_hi = cpu.cpu_read_2(cpu.pc)
+    cpu.pc += 2
     ptr = (ptr_hi << 8) | ptr_lo
 
     if ptr_lo == 0x00ff:  # Simulate page boundary hardware bug
-        cpu._addr_abs = (cpu.read(ptr & 0xff00) << 8) | cpu.read(ptr + 0)
+        cpu._addr_abs = (cpu.cpu_read(ptr & 0xff00) << 8) | cpu.cpu_read(ptr + 0)
     else:
-        cpu._addr_abs = (cpu.read(ptr + 1) << 8) | cpu.read(ptr + 0)
+        cpu._addr_abs = (cpu.cpu_read(ptr + 1) << 8) | cpu.cpu_read(ptr + 0)
 
     return 0
 
 
 def IZX(cpu: CPU6502):
-    t = cpu.read(cpu.pc)
+    t = cpu.cpu_read(cpu.pc)
     cpu.pc += 1
 
-    lo = cpu.read((t + cpu.x) & 0x00ff)
-    hi = cpu.read((t + cpu.x + 1) & 0x00ff)
+    lo = cpu.cpu_read((t + cpu.x) & 0x00ff)
+    hi = cpu.cpu_read((t + cpu.x + 1) & 0x00ff)
 
     cpu._addr_abs = (hi << 8) | lo
     return 0
 
 
 def IZY(cpu: CPU6502):
-    t = cpu.read(cpu.pc)
+    t = cpu.cpu_read(cpu.pc)
     cpu.pc += 1
 
-    lo = cpu.read(t & 0x00ff)
-    hi = cpu.read((t + 1) & 0x00ff)
+    lo = cpu.cpu_read(t & 0x00ff)
+    hi = cpu.cpu_read((t + 1) & 0x00ff)
 
     cpu._addr_abs = (hi << 8) | lo
     cpu._addr_abs += cpu.y
@@ -129,13 +144,13 @@ def IZY(cpu: CPU6502):
 # Opcodes
 def _add(cpu, fetched):
     a = cpu.a
-    carry = cpu.get_flag(FLAGS6502.C)
+    carry = cpu.get_flag(Flags6502.C)
     temp = (a & 0xffff) + (fetched & 0xffff) + (carry & 0xffff)
-    cpu.set_flag(FLAGS6502.C, temp > 0xff)
-    cpu.set_flag(FLAGS6502.Z, (temp & 0x00ff) == 0)
-    cpu.set_flag(FLAGS6502.N, temp & 0x80)
+    cpu.set_flag(Flags6502.C, temp > 0xff)
+    cpu.set_flag(Flags6502.Z, (temp & 0x00ff) == 0)
+    cpu.set_flag(Flags6502.N, temp & 0x80)
     overflow = ~(a ^ fetched) & (a ^ temp) & 0x0080
-    cpu.set_flag(FLAGS6502.V, overflow)
+    cpu.set_flag(Flags6502.V, overflow)
     cpu.a = temp & 0x00ff
 
 
@@ -150,8 +165,8 @@ def ADC(cpu: CPU6502):
 def AND(cpu: CPU6502):
     fetched = cpu.fetch()
     cpu.a = cpu.a & fetched
-    cpu.set_flag(FLAGS6502.Z, cpu.a == 0x00)
-    cpu.set_flag(FLAGS6502.N, cpu.a & 0x80)
+    cpu.set_flag(Flags6502.Z, cpu.a == 0x00)
+    cpu.set_flag(Flags6502.N, cpu.a & 0x80)
     return 1
 
 
@@ -169,21 +184,21 @@ def _branch(cpu: CPU6502):
 
 # branch on carry clear
 def BCC(cpu: CPU6502):
-    if not cpu.get_flag(FLAGS6502.C):
+    if not cpu.get_flag(Flags6502.C):
         _branch(cpu)
     return 0
 
 
 # branch on carry set
 def BCS(cpu: CPU6502):
-    if cpu.get_flag(FLAGS6502.C):
+    if cpu.get_flag(Flags6502.C):
         _branch(cpu)
     return 0
 
 
 # branch on equal (zero set)
 def BEQ(cpu: CPU6502):
-    if cpu.get_flag(FLAGS6502.Z):
+    if cpu.get_flag(Flags6502.Z):
         _branch(cpu)
     return 0
 
@@ -194,21 +209,21 @@ def BIT(cpu: CPU6502): pass
 
 # branch on minus (negative set)
 def BMI(cpu: CPU6502):
-    if cpu.get_flag(FLAGS6502.N):
+    if cpu.get_flag(Flags6502.N):
         _branch(cpu)
     return 0
 
 
 # branch on not equal (zero clear)
 def BNE(cpu: CPU6502):
-    if not cpu.get_flag(FLAGS6502.Z):
+    if not cpu.get_flag(Flags6502.Z):
         _branch(cpu)
     return 0
 
 
 # branch on plus (negative clear)
 def BPL(cpu: CPU6502):
-    if not cpu.get_flag(FLAGS6502.N):
+    if cpu.get_flag(Flags6502.N) == 0:
         _branch(cpu)
     return 0
 
@@ -216,52 +231,52 @@ def BPL(cpu: CPU6502):
 # break / interrupt
 def BRK(cpu: CPU6502):
     cpu.pc += 1
-    cpu.set_flag(FLAGS6502.I, True)
+    cpu.set_flag(Flags6502.I, True)
     cpu._store_program_counter_from_stack()
 
-    cpu.set_flag(FLAGS6502.B, True)
-    cpu.write(0x0100 + cpu.stkp, cpu.status)
+    cpu.set_flag(Flags6502.B, True)
+    cpu.cpu_write(0x0100 + cpu.stkp, cpu.status)
     cpu.stkp -= 1
-    cpu.set_flag(FLAGS6502.B, False)
+    cpu.set_flag(Flags6502.B, False)
     cpu._load_program_counter_from_addr(0xFFFE)
     return 0
 
 
 # branch on overflow clear
 def BVC(cpu: CPU6502):
-    if not cpu.get_flag(FLAGS6502.V):
+    if not cpu.get_flag(Flags6502.V):
         _branch(cpu)
     return 0
 
 
 # branch on overflow set
 def BVS(cpu: CPU6502):
-    if cpu.get_flag(FLAGS6502.V):
+    if cpu.get_flag(Flags6502.V):
         _branch(cpu)
     return 0
 
 
 # clear carry
 def CLC(cpu: CPU6502):
-    cpu.set_flag(FLAGS6502.C, False)
+    cpu.set_flag(Flags6502.C, False)
     return 0
 
 
 # clear decimal
 def CLD(cpu: CPU6502):
-    cpu.set_flag(FLAGS6502.D, False)
+    cpu.set_flag(Flags6502.D, False)
     return 0
 
 
 # clear interrupt disable
 def CLI(cpu: CPU6502):
-    cpu.set_flag(FLAGS6502.I, False)
+    cpu.set_flag(Flags6502.I, False)
     return 0
 
 
 # clear overflow
 def CLV(cpu: CPU6502):
-    cpu.set_flag(FLAGS6502.V, False)
+    cpu.set_flag(Flags6502.V, False)
     return 0
 
 
@@ -278,25 +293,25 @@ def CPY(cpu: CPU6502): pass  # compare with Y
 def DEC(cpu: CPU6502):
     value = cpu.fetch()
     value -= 1
-    cpu.write(cpu._addr_abs, value & 0xff)
-    cpu.set_flag(FLAGS6502.Z, (value & 0xff) == 0x00)
-    cpu.set_flag(FLAGS6502.N, value & 0x0080)
+    cpu.cpu_write(cpu._addr_abs, value & 0xff)
+    cpu.set_flag(Flags6502.Z, (value & 0xff) == 0x00)
+    cpu.set_flag(Flags6502.N, value & 0x0080)
     return 0
 
 
 # decrement X
 def DEX(cpu: CPU6502):
     cpu.x -= 0x01
-    cpu.set_flag(FLAGS6502.Z, cpu.x == 0x00)
-    cpu.set_flag(FLAGS6502.N, cpu.x & 0x80)
+    cpu.set_flag(Flags6502.Z, cpu.x == 0x00)
+    cpu.set_flag(Flags6502.N, cpu.x & 0x80)
     return 0
 
 
 # decrement Y
 def DEY(cpu: CPU6502):
     cpu.y -= 0x01
-    cpu.set_flag(FLAGS6502.Z, cpu.y == 0x00)
-    cpu.set_flag(FLAGS6502.N, cpu.y & 0x80)
+    cpu.set_flag(Flags6502.Z, cpu.y == 0x00)
+    cpu.set_flag(Flags6502.N, cpu.y & 0x80)
     return 0
 
 
@@ -307,25 +322,25 @@ def EOR(cpu: CPU6502): pass  # exclusive or (with accumulator)
 def INC(cpu: CPU6502):
     value = cpu.fetch()
     value += 1
-    cpu.write(cpu._addr_abs, value & 0xff)
-    cpu.set_flag(FLAGS6502.Z, (value & 0xff) == 0x00)
-    cpu.set_flag(FLAGS6502.N, value & 0x0080)
+    cpu.cpu_write(cpu._addr_abs, value & 0xff)
+    cpu.set_flag(Flags6502.Z, (value & 0xff) == 0x00)
+    cpu.set_flag(Flags6502.N, value & 0x0080)
     return 0
 
 
 # increment X
 def INX(cpu: CPU6502):
     cpu.x += 0x01
-    cpu.set_flag(FLAGS6502.Z, cpu.x == 0x00)
-    cpu.set_flag(FLAGS6502.N, cpu.x & 0x80)
+    cpu.set_flag(Flags6502.Z, cpu.x == 0x00)
+    cpu.set_flag(Flags6502.N, cpu.x & 0x80)
     return 0
 
 
 # increment Y
 def INY(cpu: CPU6502):
     cpu.y += 0x01
-    cpu.set_flag(FLAGS6502.Z, cpu.y == 0x00)
-    cpu.set_flag(FLAGS6502.N, cpu.y & 0x80)
+    cpu.set_flag(Flags6502.Z, cpu.y == 0x00)
+    cpu.set_flag(Flags6502.N, cpu.y & 0x80)
     return 0
 
 
@@ -338,24 +353,24 @@ def JSR(cpu: CPU6502): pass  # jump subroutine
 # load accumulator
 def LDA(cpu: CPU6502):
     cpu.a = cpu.fetch()
-    cpu.set_flag(FLAGS6502.Z, cpu.a == 0x00)
-    cpu.set_flag(FLAGS6502.N, cpu.a & 0x80)
+    cpu.set_flag(Flags6502.Z, cpu.a == 0x00)
+    cpu.set_flag(Flags6502.N, cpu.a & 0x80)
     return 1
 
 
 # load X
 def LDX(cpu: CPU6502):
     cpu.x = cpu.fetch()
-    cpu.set_flag(FLAGS6502.Z, cpu.x == 0x00)
-    cpu.set_flag(FLAGS6502.N, cpu.x & 0x80)
+    cpu.set_flag(Flags6502.Z, cpu.x == 0x00)
+    cpu.set_flag(Flags6502.N, cpu.x & 0x80)
     return 1
 
 
 # load Y
 def LDY(cpu: CPU6502):
     cpu.y = cpu.fetch()
-    cpu.set_flag(FLAGS6502.Z, cpu.y == 0x00)
-    cpu.set_flag(FLAGS6502.N, cpu.y & 0x80)
+    cpu.set_flag(Flags6502.Z, cpu.y == 0x00)
+    cpu.set_flag(Flags6502.N, cpu.y & 0x80)
     return 1
 
 
@@ -372,7 +387,7 @@ def ORA(cpu: CPU6502): pass  # or with accumulator
 
 # push accumulator
 def PHA(cpu: CPU6502):
-    cpu.write(0x0100 + cpu.stkp, cpu.a)
+    cpu.cpu_write(0x0100 + cpu.stkp, cpu.a)
     cpu.stkp -= 1
     return 0
 
@@ -383,9 +398,9 @@ def PHP(cpu: CPU6502): pass  # push processor status (SR)
 # pull accumulator
 def PLA(cpu: CPU6502):
     cpu.stkp += 1
-    cpu.a = cpu.read(0x0100 + cpu.stkp)
-    cpu.set_flag(FLAGS6502.Z, cpu.a == 0x00)
-    cpu.set_flag(FLAGS6502.N, cpu.a & 0x80)
+    cpu.a = cpu.cpu_read(0x0100 + cpu.stkp)
+    cpu.set_flag(Flags6502.Z, cpu.a == 0x00)
+    cpu.set_flag(Flags6502.N, cpu.a & 0x80)
     return 0
 
 
@@ -402,9 +417,9 @@ def ROR(cpu: CPU6502): pass  # rotate right
 def RTI(cpu: CPU6502):
     cpu.stkp += 1
 
-    cpu.status = cpu.read(0x0100 + cpu.stkp)
-    cpu.status &= ~FLAGS6502.B.value
-    cpu.status &= ~FLAGS6502.U.value
+    cpu.status = cpu.cpu_read(0x0100 + cpu.stkp)
+    cpu.status &= ~Flags6502.B
+    cpu.status &= ~Flags6502.U
 
     cpu.stkp += 1
     cpu._load_program_counter_from_addr(0x0100 + cpu.stkp)
@@ -425,37 +440,37 @@ def SBC(cpu: CPU6502):
 
 # set carry
 def SEC(cpu: CPU6502):
-    cpu.set_flag(FLAGS6502.C, True)
+    cpu.set_flag(Flags6502.C, True)
     return 0
 
 
 # set decimal
 def SED(cpu: CPU6502):
-    cpu.set_flag(FLAGS6502.D, True)
+    cpu.set_flag(Flags6502.D, True)
     return 0
 
 
 # set interrupt disable
 def SEI(cpu: CPU6502):
-    cpu.set_flag(FLAGS6502.I, True)
+    cpu.set_flag(Flags6502.I, True)
     return 0
 
 
 # store accumulator
 def STA(cpu: CPU6502):
-    cpu.write(cpu._addr_abs, cpu.a)
+    cpu.cpu_write(cpu._addr_abs, cpu.a)
     return 0
 
 
 # store X
 def STX(cpu: CPU6502):
-    cpu.write(cpu._addr_abs, cpu.x)
+    cpu.cpu_write(cpu._addr_abs, cpu.x)
     return 0
 
 
 # store Y
 def STY(cpu: CPU6502):
-    cpu.write(cpu._addr_abs, cpu.y)
+    cpu.cpu_write(cpu._addr_abs, cpu.y)
     return 0
 
 
@@ -471,7 +486,10 @@ def TSX(cpu: CPU6502): pass  # transfer stack pointer to X
 def TXA(cpu: CPU6502): pass  # transfer X to accumulator
 
 
-def TXS(cpu: CPU6502): pass  # transfer X to stack pointer
+# transfer X to stack pointer
+def TXS(cpu: CPU6502):
+    cpu.stkp = cpu.x
+    return 0
 
 
 def TYA(cpu: CPU6502): pass  # transfer Y to accumulator
@@ -779,11 +797,16 @@ class AsmCPU:
         self.pc = addr
         self.bus = bus
         self.a = 0x00
+        self.x = 0x00
+        self.y = 0x00
         self._addr_abs = 0x0000
         self._addr_rel = 0x0000
 
     def cpu_read(self, addr):
         return self.bus.cpu_read(addr, read_only=True)
+
+    def cpu_read_2(self, addr):
+        return self.bus.cpu_read_2(addr, read_only=True)
 
     def get_opcode(self):
         opcode = self.cpu_read(self.pc)

@@ -1,7 +1,7 @@
 from enum import Enum
 
 
-class FLAGS6502(Enum):
+class Flags6502:
     C = 1 << 0  # Carry Bit
     Z = 1 << 1  # Zero
     I = 1 << 2  # Disable Interrupts

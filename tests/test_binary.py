@@ -1,3 +1,4 @@
+
 def test_binary_ops():
     a = 0b01101011
     b = 0b00000111
