@@ -32,7 +32,7 @@ class Bus:
         return data
 
     def cpu_read_2(self, addr: int, read_only=False) -> int:
-        data = 0x00
+        data = (0x00, 0x00)
 
         if 0x8000 <= addr <= 0xFFFF:
             data = self.cart.cpu_read_2(addr)
@@ -58,5 +58,9 @@ class Bus:
 
         if self.system_clock_counter % 3 == 0:
             self.cpu.clock()
+
+        if self.ppu.nmi:
+            self.ppu.nmi = False
+            self.cpu.nmi()
 
         self.system_clock_counter += 1

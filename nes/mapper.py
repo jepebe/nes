@@ -38,6 +38,11 @@ class Mapper000(Mapper):
         return None
 
     def ppu_map_write(self, addr: int) -> Union[int, None]:
+        if 0x0000 <= addr <= 0x1FFF:
+            if self.chr_banks == 0:
+                print(f'writing to cartridge RAM? Mapper000')
+                return addr
+
         return None
 
 

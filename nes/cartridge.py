@@ -1,3 +1,4 @@
+from enum import Enum
 from io import SEEK_CUR
 from typing import Union
 
@@ -36,6 +37,13 @@ MAPPERS = {
 }
 
 
+class Mirror(Enum):
+    HORIZONTAL = 0x00
+    VERTICAL = 0x01
+    ONESCREEN_LO = 0x02
+    ONESCREEN_HI = 0x03
+
+
 class Cartridge:
 
     def __init__(self, filename):
@@ -44,6 +52,7 @@ class Cartridge:
         self.prg_memory = None
         self.chr_memory = None
         self.mapper_id = 0x00
+        self.mirror = Mirror.HORIZONTAL
         self.prg_banks = 0x00
         self.chr_banks = 0x00
         self.mapper = None
@@ -51,15 +60,14 @@ class Cartridge:
         self.read_cartridge()
 
     def read_cartridge(self):
-
         with open(self.filename, 'rb') as f:
             header = NesHeader.create_header(f)
             if header.mapper1 & 0x04:
-                print('skipping')
+                print('skipping training data')
                 f.seek(512, SEEK_CUR)
 
             self.mapper_id = ((header.mapper2 >> 4) << 4) | (header.mapper1 >> 4)
-
+            self.mirror = Mirror(header.mapper1 & 0x01)
             file_type = 1
 
             if file_type == 0:
@@ -84,8 +92,8 @@ class Cartridge:
         self.prg_memory[mapped_addr] = data
 
     def cpu_read(self, addr: int, read_only=False) -> int:
-        # return self.prg_memory[self.mapper.cpu_map_read(addr)]
-        return self.prg_memory[self.mapper.cpu_map[addr]]
+        return self.prg_memory[self.mapper.cpu_map_read(addr)]
+        # return self.prg_memory[self.mapper.cpu_map[addr]]
 
     def cpu_read_2(self, addr: int, read_only=False) -> (int, int):
         # return self.prg_memory[self.mapper.cpu_map_read(addr)]

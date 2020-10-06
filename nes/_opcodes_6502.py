@@ -1,42 +1,42 @@
-from cpu_6502 import CPU6502
+from cpu_6502 import CPU6502State as CPU6502
 from flags_6502 import Flags6502
 
 
 # Addressing Modes
-def IMP(cpu: CPU6502):
+def IMP(cpu: CPU6502, bus):
     cpu._implied = cpu.a
     return 0
 
 
-def IMM(cpu: CPU6502):
+def IMM(cpu: CPU6502, bus):
     cpu._addr_abs = cpu.pc
     cpu.pc += 1
     return 0
 
 
-def ZP0(cpu: CPU6502):
-    cpu._addr_abs = cpu.cpu_read(cpu.pc)
+def ZP0(cpu: CPU6502, bus):
+    cpu._addr_abs = bus.cpu_read(cpu.pc)
     cpu.pc += 1
     cpu._addr_abs &= 0x00ff
     return 0
 
 
-def ZPX(cpu: CPU6502):
-    cpu._addr_abs = cpu.cpu_read(cpu.pc) + cpu.x
+def ZPX(cpu: CPU6502, bus):
+    cpu._addr_abs = bus.cpu_read(cpu.pc) + cpu.x
     cpu.pc += 1
     cpu._addr_abs &= 0x00ff
     return 0
 
 
-def ZPY(cpu: CPU6502):
-    cpu._addr_abs = cpu.cpu_read(cpu.pc) + cpu.y
+def ZPY(cpu: CPU6502, bus):
+    cpu._addr_abs = bus.cpu_read(cpu.pc) + cpu.y
     cpu.pc += 1
     cpu._addr_abs &= 0x00ff
     return 0
 
 
-def REL(cpu: CPU6502):
-    cpu._addr_rel = cpu.cpu_read(cpu.pc)
+def REL(cpu: CPU6502, bus):
+    cpu._addr_rel = bus.cpu_read(cpu.pc)
     cpu.pc += 1
     if cpu._addr_rel & 0x80:
         cpu._addr_rel |= 0xff00
@@ -44,32 +44,15 @@ def REL(cpu: CPU6502):
     return 0
 
 
-# before read 2
-# 93578	0.0831	8.881e-07	0.2518	2.69e-06	_opcodes_6502.py:339(LDA)
-# 96309	0.07966	8.271e-07	0.2301	2.389e-06	_opcodes_6502.py:47(ABS)
-# 96474	0.05889	6.105e-07	0.1346	1.395e-06	_opcodes_6502.py:38(REL)
-# 93578	0.04488	4.796e-07	0.1146	1.225e-06	_opcodes_6502.py:210(BPL)
-# 3.1016180515289307 633599.2915153658
-# Frame count: 22 FPS: 7.093071949705473
-#
-# 96309	0.0554	5.752e-07	0.1474	1.53e-06	_opcodes_6502.py:54(ABS)
-def ABS(cpu: CPU6502):
-    # lo = cpu.cpu_read(cpu.pc)
-    # cpu.pc += 1
-    # hi = cpu.cpu_read(cpu.pc)
-    # cpu.pc += 1
-    lo, hi = cpu.cpu_read_2(cpu.pc)
+def ABS(cpu: CPU6502, bus):
+    lo, hi = bus.cpu_read_2(cpu.pc)
     cpu.pc += 2
     cpu._addr_abs = (hi << 8) | lo
     return 0
 
 
-def ABX(cpu: CPU6502):
-    # lo = cpu.cpu_read(cpu.pc)
-    # cpu.pc += 1
-    # hi = cpu.cpu_read(cpu.pc)
-    # cpu.pc += 1
-    lo, hi = cpu.cpu_read_2(cpu.pc)
+def ABX(cpu: CPU6502, bus):
+    lo, hi = bus.cpu_read_2(cpu.pc)
     cpu.pc += 2
     cpu._addr_abs = (hi << 8) | lo
     cpu._addr_abs += cpu.x
@@ -80,62 +63,53 @@ def ABX(cpu: CPU6502):
         return 0
 
 
-def ABY(cpu: CPU6502):
-    # lo = cpu.cpu_read(cpu.pc)
-    # cpu.pc += 1
-    # hi = cpu.cpu_read(cpu.pc)
-    # cpu.pc += 1
-    lo, hi = cpu.cpu_read_2(cpu.pc)
+def ABY(cpu: CPU6502, bus):
+    lo, hi = bus.cpu_read_2(cpu.pc)
     cpu.pc += 2
-    cpu._addr_abs = (hi << 8) | lo
-    cpu._addr_abs += cpu.y
+    addr = ((hi << 8) | lo) + cpu.y
+    cpu._addr_abs = addr & 0xFFFF
 
-    if (cpu._addr_abs & 0xff00) != (hi << 8):
+    if (addr & 0xff00) != (hi << 8):
         return 1
     else:
         return 0
 
 
-def IND(cpu: CPU6502):
-    # ptr_lo = cpu.cpu_read(cpu.pc)
-    # cpu.pc += 1
-    # ptr_hi = cpu.cpu_read(cpu.pc)
-    # cpu.pc += 1
-
-    ptr_lo, ptr_hi = cpu.cpu_read_2(cpu.pc)
+def IND(cpu: CPU6502, bus):
+    ptr_lo, ptr_hi = bus.cpu_read_2(cpu.pc)
     cpu.pc += 2
     ptr = (ptr_hi << 8) | ptr_lo
 
     if ptr_lo == 0x00ff:  # Simulate page boundary hardware bug
-        cpu._addr_abs = (cpu.cpu_read(ptr & 0xff00) << 8) | cpu.cpu_read(ptr + 0)
+        cpu._addr_abs = (bus.cpu_read(ptr & 0xff00) << 8) | bus.cpu_read(ptr + 0)
     else:
-        cpu._addr_abs = (cpu.cpu_read(ptr + 1) << 8) | cpu.cpu_read(ptr + 0)
+        cpu._addr_abs = (bus.cpu_read(ptr + 1) << 8) | bus.cpu_read(ptr + 0)
 
     return 0
 
 
-def IZX(cpu: CPU6502):
-    t = cpu.cpu_read(cpu.pc)
+def IZX(cpu: CPU6502, bus):
+    t = bus.cpu_read(cpu.pc)
     cpu.pc += 1
 
-    lo = cpu.cpu_read((t + cpu.x) & 0x00ff)
-    hi = cpu.cpu_read((t + cpu.x + 1) & 0x00ff)
+    lo = bus.cpu_read((t + cpu.x) & 0x00ff)
+    hi = bus.cpu_read((t + cpu.x + 1) & 0x00ff)
 
     cpu._addr_abs = (hi << 8) | lo
     return 0
 
 
-def IZY(cpu: CPU6502):
-    t = cpu.cpu_read(cpu.pc)
+def IZY(cpu: CPU6502, bus):
+    t = bus.cpu_read(cpu.pc)
     cpu.pc += 1
 
-    lo = cpu.cpu_read(t & 0x00ff)
-    hi = cpu.cpu_read((t + 1) & 0x00ff)
+    lo = bus.cpu_read(t & 0x00ff)
+    hi = bus.cpu_read((t + 1) & 0x00ff)
 
-    cpu._addr_abs = (hi << 8) | lo
-    cpu._addr_abs += cpu.y
+    addr = ((hi << 8) | lo) + cpu.y
+    cpu._addr_abs = addr & 0xFFFF
 
-    if (cpu._addr_abs & 0xff00) != (hi << 8):
+    if (addr & 0xff00) != (hi << 8):
         return 1
     else:
         return 0
@@ -155,22 +129,34 @@ def _add(cpu, fetched):
 
 
 # add with carry
-def ADC(cpu: CPU6502):
-    fetched = cpu.fetch()
+def ADC(cpu: CPU6502, bus):
+    fetched = bus.fetch()
     _add(cpu, fetched)
     return 1
 
 
 # and (with accumulator)
-def AND(cpu: CPU6502):
-    fetched = cpu.fetch()
+def AND(cpu: CPU6502, bus):
+    fetched = bus.fetch()
     cpu.a = cpu.a & fetched
     cpu.set_flag(Flags6502.Z, cpu.a == 0x00)
     cpu.set_flag(Flags6502.N, cpu.a & 0x80)
     return 1
 
 
-def ASL(cpu: CPU6502): pass  # arithmetic shift left
+# arithmetic shift left
+def ASL(cpu: CPU6502, bus):
+    fetched = bus.fetch()
+    cpu.set_flag(Flags6502.C, fetched & 0x80)
+    fetched = (fetched << 1) & 0xFF
+    cpu.set_flag(Flags6502.Z, fetched == 0x00)
+    cpu.set_flag(Flags6502.N, fetched & 0x80)
+
+    if lookup[cpu.opcode].addr_mode == IMP:
+        cpu.a = fetched
+    else:
+        bus.cpu_write(cpu._addr_abs, fetched)
+    return 0
 
 
 def _branch(cpu: CPU6502):
@@ -183,330 +169,480 @@ def _branch(cpu: CPU6502):
 
 
 # branch on carry clear
-def BCC(cpu: CPU6502):
+def BCC(cpu: CPU6502, bus):
     if not cpu.get_flag(Flags6502.C):
         _branch(cpu)
     return 0
 
 
 # branch on carry set
-def BCS(cpu: CPU6502):
+def BCS(cpu: CPU6502, bus):
     if cpu.get_flag(Flags6502.C):
         _branch(cpu)
     return 0
 
 
 # branch on equal (zero set)
-def BEQ(cpu: CPU6502):
+def BEQ(cpu: CPU6502, bus):
     if cpu.get_flag(Flags6502.Z):
         _branch(cpu)
     return 0
 
 
 # bit test
-def BIT(cpu: CPU6502): pass
+def BIT(cpu: CPU6502, bus):
+    fetched = bus.fetch()
+    temp = cpu.a & fetched
+    cpu.set_flag(Flags6502.Z, (temp & 0x00FF) == 0x00)
+    cpu.set_flag(Flags6502.N, fetched & (1 << 7))
+    cpu.set_flag(Flags6502.V, fetched & (1 << 6))
+    return 0
 
 
 # branch on minus (negative set)
-def BMI(cpu: CPU6502):
+def BMI(cpu: CPU6502, bus):
     if cpu.get_flag(Flags6502.N):
         _branch(cpu)
     return 0
 
 
 # branch on not equal (zero clear)
-def BNE(cpu: CPU6502):
+def BNE(cpu: CPU6502, bus):
     if not cpu.get_flag(Flags6502.Z):
         _branch(cpu)
     return 0
 
 
 # branch on plus (negative clear)
-def BPL(cpu: CPU6502):
+def BPL(cpu: CPU6502, bus):
     if cpu.get_flag(Flags6502.N) == 0:
         _branch(cpu)
     return 0
 
 
 # break / interrupt
-def BRK(cpu: CPU6502):
+def BRK(cpu: CPU6502, bus):
     cpu.pc += 1
     cpu.set_flag(Flags6502.I, True)
-    cpu._store_program_counter_from_stack()
+    bus._push_program_counter_on_stack()
 
     cpu.set_flag(Flags6502.B, True)
-    cpu.cpu_write(0x0100 + cpu.stkp, cpu.status)
+    bus.cpu_write(0x0100 + cpu.stkp, cpu.status)
     cpu.stkp -= 1
     cpu.set_flag(Flags6502.B, False)
-    cpu._load_program_counter_from_addr(0xFFFE)
+    bus._load_program_counter_from_addr(0xFFFE)
     return 0
 
 
 # branch on overflow clear
-def BVC(cpu: CPU6502):
+def BVC(cpu: CPU6502, bus):
     if not cpu.get_flag(Flags6502.V):
         _branch(cpu)
     return 0
 
 
 # branch on overflow set
-def BVS(cpu: CPU6502):
+def BVS(cpu: CPU6502, bus):
     if cpu.get_flag(Flags6502.V):
         _branch(cpu)
     return 0
 
 
 # clear carry
-def CLC(cpu: CPU6502):
+def CLC(cpu: CPU6502, bus):
     cpu.set_flag(Flags6502.C, False)
     return 0
 
 
 # clear decimal
-def CLD(cpu: CPU6502):
+def CLD(cpu: CPU6502, bus):
     cpu.set_flag(Flags6502.D, False)
     return 0
 
 
 # clear interrupt disable
-def CLI(cpu: CPU6502):
+def CLI(cpu: CPU6502, bus):
     cpu.set_flag(Flags6502.I, False)
     return 0
 
 
 # clear overflow
-def CLV(cpu: CPU6502):
+def CLV(cpu: CPU6502, bus):
     cpu.set_flag(Flags6502.V, False)
     return 0
 
 
-def CMP(cpu: CPU6502): pass  # compare (with accumulator)
+# compare (with accumulator)
+def CMP(cpu: CPU6502, bus):
+    fetched = bus.fetch()
+
+    temp = cpu.a - fetched
+    cpu.set_flag(Flags6502.C, cpu.a >= fetched)
+    cpu.set_flag(Flags6502.Z, (temp & 0x00ff) == 0x00)
+    cpu.set_flag(Flags6502.N, temp & 0x80)
+    return 1
 
 
-def CPX(cpu: CPU6502): pass  # compare with X
+# compare with X
+def CPX(cpu: CPU6502, bus):
+    fetched = bus.fetch()
+    temp = cpu.x - fetched
+    cpu.set_flag(Flags6502.C, cpu.x >= fetched)
+    cpu.set_flag(Flags6502.Z, (temp & 0x00ff) == 0x00)
+    cpu.set_flag(Flags6502.N, temp & 0x80)
+    return 1
 
 
-def CPY(cpu: CPU6502): pass  # compare with Y
+# compare with Y
+def CPY(cpu: CPU6502, bus):
+    fetched = bus.fetch()
+    temp = cpu.y - fetched
+    cpu.set_flag(Flags6502.C, cpu.y >= fetched)
+    cpu.set_flag(Flags6502.Z, (temp & 0x00ff) == 0x00)
+    cpu.set_flag(Flags6502.N, temp & 0x80)
+    return 1
 
+
+#
+def DCP(cpu: CPU6502, bus):
+
+    return 0
 
 # decrement
-def DEC(cpu: CPU6502):
-    value = cpu.fetch()
+def DEC(cpu: CPU6502, bus):
+    value = bus.fetch()
     value -= 1
-    cpu.cpu_write(cpu._addr_abs, value & 0xff)
+    bus.cpu_write(cpu._addr_abs, value & 0xff)
     cpu.set_flag(Flags6502.Z, (value & 0xff) == 0x00)
     cpu.set_flag(Flags6502.N, value & 0x0080)
     return 0
 
 
 # decrement X
-def DEX(cpu: CPU6502):
-    cpu.x -= 0x01
+def DEX(cpu: CPU6502, bus):
+    cpu.x = (cpu.x - 0x01) & 0xff
     cpu.set_flag(Flags6502.Z, cpu.x == 0x00)
     cpu.set_flag(Flags6502.N, cpu.x & 0x80)
     return 0
 
 
 # decrement Y
-def DEY(cpu: CPU6502):
-    cpu.y -= 0x01
+def DEY(cpu: CPU6502, bus):
+    cpu.y = (cpu.y - 0x01) & 0xff
     cpu.set_flag(Flags6502.Z, cpu.y == 0x00)
     cpu.set_flag(Flags6502.N, cpu.y & 0x80)
     return 0
 
 
-def EOR(cpu: CPU6502): pass  # exclusive or (with accumulator)
+# exclusive or (with accumulator)
+def EOR(cpu: CPU6502, bus):
+    m = bus.fetch()
+    cpu.a ^= (m & 0xff)
+    cpu.set_flag(Flags6502.Z, cpu.a == 0x00)
+    cpu.set_flag(Flags6502.N, cpu.a & 0x80)
+    return 1
 
 
 # increment
-def INC(cpu: CPU6502):
-    value = cpu.fetch()
+def INC(cpu: CPU6502, bus):
+    value = bus.fetch()
     value += 1
-    cpu.cpu_write(cpu._addr_abs, value & 0xff)
+    bus.cpu_write(cpu._addr_abs, value & 0xff)
     cpu.set_flag(Flags6502.Z, (value & 0xff) == 0x00)
     cpu.set_flag(Flags6502.N, value & 0x0080)
     return 0
 
 
 # increment X
-def INX(cpu: CPU6502):
-    cpu.x += 0x01
+def INX(cpu: CPU6502, bus):
+    cpu.x = (cpu.x + 0x01) & 0xFF
     cpu.set_flag(Flags6502.Z, cpu.x == 0x00)
     cpu.set_flag(Flags6502.N, cpu.x & 0x80)
     return 0
 
 
 # increment Y
-def INY(cpu: CPU6502):
-    cpu.y += 0x01
+def INY(cpu: CPU6502, bus):
+    cpu.y = (cpu.y + 0x01) & 0xFF
     cpu.set_flag(Flags6502.Z, cpu.y == 0x00)
     cpu.set_flag(Flags6502.N, cpu.y & 0x80)
     return 0
 
 
-def JMP(cpu: CPU6502): pass  # jump
+# jump
+def JMP(cpu: CPU6502, bus):
+    cpu.pc = cpu._addr_abs
+    return 0
 
 
-def JSR(cpu: CPU6502): pass  # jump subroutine
+# jump subroutine
+def JSR(cpu: CPU6502, bus):
+    cpu.pc -= 1
+    bus._push_program_counter_on_stack()
+    cpu.pc = cpu._addr_abs
+    return 0
+
+
+# * load accumulator and x with memory contents
+def LAX(cpu: CPU6502, bus):
+    value = bus.fetch()
+    cpu.a = value
+    cpu.x = value
+    cpu.set_flag(Flags6502.Z, value == 0x00)
+    cpu.set_flag(Flags6502.N, value & 0x80)
+    return 1
 
 
 # load accumulator
-def LDA(cpu: CPU6502):
-    cpu.a = cpu.fetch()
+def LDA(cpu: CPU6502, bus):
+    cpu.a = bus.fetch()
     cpu.set_flag(Flags6502.Z, cpu.a == 0x00)
     cpu.set_flag(Flags6502.N, cpu.a & 0x80)
     return 1
 
 
 # load X
-def LDX(cpu: CPU6502):
-    cpu.x = cpu.fetch()
+def LDX(cpu: CPU6502, bus):
+    cpu.x = bus.fetch()
     cpu.set_flag(Flags6502.Z, cpu.x == 0x00)
     cpu.set_flag(Flags6502.N, cpu.x & 0x80)
     return 1
 
 
 # load Y
-def LDY(cpu: CPU6502):
-    cpu.y = cpu.fetch()
+def LDY(cpu: CPU6502, bus):
+    cpu.y = bus.fetch()
     cpu.set_flag(Flags6502.Z, cpu.y == 0x00)
     cpu.set_flag(Flags6502.N, cpu.y & 0x80)
     return 1
 
 
-def LSR(cpu: CPU6502): pass  # logical shift right
+# logical shift right
+def LSR(cpu: CPU6502, bus):
+    fetched = bus.fetch()
+    cpu.set_flag(Flags6502.C, fetched & 0x01)
+    fetched = (fetched >> 1) & 0xFF
+    cpu.set_flag(Flags6502.Z, fetched == 0x00)
+    cpu.set_flag(Flags6502.N, 0)
 
-
-# no operation
-def NOP(cpu: CPU6502):
+    if lookup[cpu.opcode].addr_mode == IMP:
+        cpu.a = fetched
+    else:
+        bus.cpu_write(cpu._addr_abs, fetched)
     return 0
 
 
-def ORA(cpu: CPU6502): pass  # or with accumulator
+# no operation
+def NOP(cpu: CPU6502, bus):
+    if cpu.opcode in (0x1C, 0x3C, 0x5C, 0x7C, 0xDC, 0xFC):
+        return 1
+    return 0
+
+
+# or with accumulator
+def ORA(cpu: CPU6502, bus):
+    m = bus.fetch()
+    cpu.a |= (m & 0xff)
+    cpu.set_flag(Flags6502.Z, cpu.a == 0x00)
+    cpu.set_flag(Flags6502.N, cpu.a & 0x80)
+    return 1
 
 
 # push accumulator
-def PHA(cpu: CPU6502):
-    cpu.cpu_write(0x0100 + cpu.stkp, cpu.a)
+def PHA(cpu: CPU6502, bus):
+    bus.cpu_write(0x0100 + cpu.stkp, cpu.a)
     cpu.stkp -= 1
     return 0
 
 
-def PHP(cpu: CPU6502): pass  # push processor status (SR)
+# push processor status (SR)
+def PHP(cpu: CPU6502, bus):
+    bus.cpu_write(0x0100 + cpu.stkp, cpu.status | Flags6502.B | Flags6502.U)
+    cpu.stkp -= 1
+    return 0
 
 
 # pull accumulator
-def PLA(cpu: CPU6502):
+def PLA(cpu: CPU6502, bus):
     cpu.stkp += 1
-    cpu.a = cpu.cpu_read(0x0100 + cpu.stkp)
+    cpu.a = bus.cpu_read(0x0100 + cpu.stkp)
     cpu.set_flag(Flags6502.Z, cpu.a == 0x00)
     cpu.set_flag(Flags6502.N, cpu.a & 0x80)
     return 0
 
 
-def PLP(cpu: CPU6502): pass  # pull processor status (SR)
+# pull processor status (SR)
+def PLP(cpu: CPU6502, bus):
+    cpu.stkp += 1
+    cpu.status = bus.cpu_read(0x0100 + cpu.stkp)
+    cpu.set_flag(Flags6502.U, 1)
+    cpu.set_flag(Flags6502.B, 0)
+    return 0
 
 
-def ROL(cpu: CPU6502): pass  # rotate left
+# rotate left
+def ROL(cpu: CPU6502, bus):
+    fetched = bus.fetch()
+    fetched = (fetched << 1) | cpu.get_flag(Flags6502.C)
+    cpu.set_flag(Flags6502.C, fetched & 0xFF00)
+    fetched &= 0xFF
+    cpu.set_flag(Flags6502.Z, fetched == 0x00)
+    cpu.set_flag(Flags6502.N, fetched & 0x80)
+
+    if lookup[cpu.opcode].addr_mode == IMP:
+        cpu.a = fetched
+    else:
+        bus.cpu_write(cpu._addr_abs, fetched)
+    return 0
 
 
-def ROR(cpu: CPU6502): pass  # rotate right
+# rotate right
+def ROR(cpu: CPU6502, bus):
+    fetched = bus.fetch()
+    carry = fetched & 0x01
+    fetched = (cpu.get_flag(Flags6502.C) << 7) | (fetched >> 1)
+    fetched &= 0xFF
+    cpu.set_flag(Flags6502.C, carry)
+    cpu.set_flag(Flags6502.Z, fetched == 0x00)
+    cpu.set_flag(Flags6502.N, fetched & 0x80)
+
+    if lookup[cpu.opcode].addr_mode == IMP:
+        cpu.a = fetched
+    else:
+        bus.cpu_write(cpu._addr_abs, fetched)
+    return 0
 
 
 # return from interrupt
-def RTI(cpu: CPU6502):
+def RTI(cpu: CPU6502, bus):
     cpu.stkp += 1
 
-    cpu.status = cpu.cpu_read(0x0100 + cpu.stkp)
-    cpu.status &= ~Flags6502.B
-    cpu.status &= ~Flags6502.U
+    cpu.status = bus.cpu_read(0x0100 + cpu.stkp)
+    cpu.set_flag(Flags6502.U, 1)
 
     cpu.stkp += 1
-    cpu._load_program_counter_from_addr(0x0100 + cpu.stkp)
+    bus._load_program_counter_from_addr(0x0100 + cpu.stkp)
     cpu.stkp += 1
     return 0
 
 
-def RTS(cpu: CPU6502): pass  # return from subroutine
+# return from subroutine
+def RTS(cpu: CPU6502, bus):
+    bus._pop_program_counter_from_stack()
+    cpu.pc += 1
+    return 0
+
+
+# AND X with A and store in memory
+def SAX(cpu: CPU6502, bus):
+    temp = (cpu.a & cpu.x)
+    bus.cpu_write(cpu._addr_abs, temp)
+    return 0
 
 
 # subtract with carry
-def SBC(cpu: CPU6502):
-    value = cpu.fetch()
+def SBC(cpu: CPU6502, bus):
+    value = bus.fetch()
     value = (value & 0xffff) ^ 0x00ff
     _add(cpu, value)
     return 1
 
 
 # set carry
-def SEC(cpu: CPU6502):
+def SEC(cpu: CPU6502, bus):
     cpu.set_flag(Flags6502.C, True)
     return 0
 
 
 # set decimal
-def SED(cpu: CPU6502):
+def SED(cpu: CPU6502, bus):
     cpu.set_flag(Flags6502.D, True)
     return 0
 
 
 # set interrupt disable
-def SEI(cpu: CPU6502):
+def SEI(cpu: CPU6502, bus):
     cpu.set_flag(Flags6502.I, True)
     return 0
 
 
 # store accumulator
-def STA(cpu: CPU6502):
-    cpu.cpu_write(cpu._addr_abs, cpu.a)
+def STA(cpu: CPU6502, bus):
+    bus.cpu_write(cpu._addr_abs, cpu.a)
     return 0
 
 
 # store X
-def STX(cpu: CPU6502):
-    cpu.cpu_write(cpu._addr_abs, cpu.x)
+def STX(cpu: CPU6502, bus):
+    bus.cpu_write(cpu._addr_abs, cpu.x)
     return 0
 
 
 # store Y
-def STY(cpu: CPU6502):
-    cpu.cpu_write(cpu._addr_abs, cpu.y)
+def STY(cpu: CPU6502, bus):
+    bus.cpu_write(cpu._addr_abs, cpu.y)
     return 0
 
 
-def TAX(cpu: CPU6502): pass  # transfer accumulator to X
+# transfer accumulator to X
+def TAX(cpu: CPU6502, bus):
+    cpu.x = cpu.a
+    cpu.set_flag(Flags6502.Z, cpu.x == 0x00)
+    cpu.set_flag(Flags6502.N, cpu.x & 0x80)
+    return 0
 
 
-def TAY(cpu: CPU6502): pass  # transfer accumulator to Y
+# transfer accumulator to Y
+def TAY(cpu: CPU6502, bus):
+    cpu.y = cpu.a
+    cpu.set_flag(Flags6502.Z, cpu.y == 0x00)
+    cpu.set_flag(Flags6502.N, cpu.y & 0x80)
+    return 0
 
 
-def TSX(cpu: CPU6502): pass  # transfer stack pointer to X
+# transfer stack pointer to X
+def TSX(cpu: CPU6502, bus):
+    cpu.x = cpu.stkp
+    cpu.set_flag(Flags6502.Z, cpu.x == 0x00)
+    cpu.set_flag(Flags6502.N, cpu.x & 0x80)
+    return 0
 
 
-def TXA(cpu: CPU6502): pass  # transfer X to accumulator
+# transfer X to accumulator
+def TXA(cpu: CPU6502, bus):
+    cpu.a = cpu.x
+    cpu.set_flag(Flags6502.Z, cpu.a == 0x00)
+    cpu.set_flag(Flags6502.N, cpu.a & 0x80)
+    return 0
 
 
 # transfer X to stack pointer
-def TXS(cpu: CPU6502):
+def TXS(cpu: CPU6502, bus):
     cpu.stkp = cpu.x
     return 0
 
 
-def TYA(cpu: CPU6502): pass  # transfer Y to accumulator
+# transfer Y to accumulator
+def TYA(cpu: CPU6502, bus):
+    cpu.a = cpu.y
+    cpu.set_flag(Flags6502.Z, cpu.a == 0x00)
+    cpu.set_flag(Flags6502.N, cpu.a & 0x80)
+    return 0
 
 
 # illegal opcodes
-def XXX(cpu: CPU6502):
+def XXX(cpu: CPU6502, bus):
     print(f'Illegal opcode at {cpu.pc}')
     return 0
 
 
 class Instruction:
-    def __init__(self, name, operate, addr_mode, cycles):
+    def __init__(self, name, operate, addr_mode, cycles, non_standard=False):
         self.name = name
         self.operate = operate
         self.addr_mode = addr_mode
         self.cycles = cycles
+        self.is_non_standard = non_standard
 
     def __repr__(self):
         name = self.name
@@ -522,7 +658,7 @@ lookup = [
     Instruction("ORA", ORA, IZX, 6),
     Instruction("???", XXX, IMP, 2),
     Instruction("???", XXX, IMP, 8),
-    Instruction("???", NOP, IMP, 3),
+    Instruction("NOP", NOP, ZP0, 3, non_standard=True),
     Instruction("ORA", ORA, ZP0, 3),
     Instruction("ASL", ASL, ZP0, 5),
     Instruction("???", XXX, IMP, 5),
@@ -530,29 +666,29 @@ lookup = [
     Instruction("ORA", ORA, IMM, 2),
     Instruction("ASL", ASL, IMP, 2),
     Instruction("???", XXX, IMP, 2),
-    Instruction("???", NOP, IMP, 4),
+    Instruction("NOP", NOP, ABS, 4, non_standard=True),
     Instruction("ORA", ORA, ABS, 4),
     Instruction("ASL", ASL, ABS, 6),
     Instruction("???", XXX, IMP, 6),
 
-    Instruction("BPL", BPL, REL, 2),
+    Instruction("BPL", BPL, REL, 2),  # 16 0x10
     Instruction("ORA", ORA, IZY, 5),
     Instruction("???", XXX, IMP, 2),
     Instruction("???", XXX, IMP, 8),
-    Instruction("???", NOP, IMP, 4),
+    Instruction("NOP", NOP, ZPX, 4, non_standard=True),
     Instruction("ORA", ORA, ZPX, 4),
     Instruction("ASL", ASL, ZPX, 6),
     Instruction("???", XXX, IMP, 6),
     Instruction("CLC", CLC, IMP, 2),
     Instruction("ORA", ORA, ABY, 4),
-    Instruction("???", NOP, IMP, 2),
+    Instruction("NOP", NOP, IMP, 2, non_standard=True),
     Instruction("???", XXX, IMP, 7),
-    Instruction("???", NOP, IMP, 4),
+    Instruction("NOP", NOP, ABX, 4, non_standard=True),  # 0x1C
     Instruction("ORA", ORA, ABX, 4),
     Instruction("ASL", ASL, ABX, 7),
     Instruction("???", XXX, IMP, 7),
 
-    Instruction("JSR", JSR, ABS, 6),
+    Instruction("JSR", JSR, ABS, 6),  # 32 0x20
     Instruction("AND", AND, IZX, 6),
     Instruction("???", XXX, IMP, 2),
     Instruction("???", XXX, IMP, 8),
@@ -569,28 +705,28 @@ lookup = [
     Instruction("ROL", ROL, ABS, 6),
     Instruction("???", XXX, IMP, 6),
 
-    Instruction("BMI", BMI, REL, 2),
+    Instruction("BMI", BMI, REL, 2),  # 48 0x30
     Instruction("AND", AND, IZY, 5),
     Instruction("???", XXX, IMP, 2),
     Instruction("???", XXX, IMP, 8),
-    Instruction("???", NOP, IMP, 4),
+    Instruction("NOP", NOP, ZPX, 4, non_standard=True),
     Instruction("AND", AND, ZPX, 4),
     Instruction("ROL", ROL, ZPX, 6),
     Instruction("???", XXX, IMP, 6),
     Instruction("SEC", SEC, IMP, 2),
     Instruction("AND", AND, ABY, 4),
-    Instruction("???", NOP, IMP, 2),
+    Instruction("NOP", NOP, IMP, 2, non_standard=True),
     Instruction("???", XXX, IMP, 7),
-    Instruction("???", NOP, IMP, 4),
+    Instruction("NOP", NOP, ABX, 4, non_standard=True),  # 0x3C
     Instruction("AND", AND, ABX, 4),
     Instruction("ROL", ROL, ABX, 7),
     Instruction("???", XXX, IMP, 7),
 
-    Instruction("RTI", RTI, IMP, 6),
+    Instruction("RTI", RTI, IMP, 6),  # 64 0x40
     Instruction("EOR", EOR, IZX, 6),
     Instruction("???", XXX, IMP, 2),
     Instruction("???", XXX, IMP, 8),
-    Instruction("???", NOP, IMP, 3),
+    Instruction("NOP", NOP, ZP0, 3, non_standard=True),
     Instruction("EOR", EOR, ZP0, 3),
     Instruction("LSR", LSR, ZP0, 5),
     Instruction("???", XXX, IMP, 5),
@@ -603,28 +739,28 @@ lookup = [
     Instruction("LSR", LSR, ABS, 6),
     Instruction("???", XXX, IMP, 6),
 
-    Instruction("BVC", BVC, REL, 2),
+    Instruction("BVC", BVC, REL, 2),  # 80 0x50
     Instruction("EOR", EOR, IZY, 5),
     Instruction("???", XXX, IMP, 2),
     Instruction("???", XXX, IMP, 8),
-    Instruction("???", NOP, IMP, 4),
+    Instruction("NOP", NOP, ZPX, 4, non_standard=True),  # 0x54
     Instruction("EOR", EOR, ZPX, 4),
     Instruction("LSR", LSR, ZPX, 6),
     Instruction("???", XXX, IMP, 6),
     Instruction("CLI", CLI, IMP, 2),
     Instruction("EOR", EOR, ABY, 4),
-    Instruction("???", NOP, IMP, 2),
+    Instruction("NOP", NOP, IMP, 2, non_standard=True),
     Instruction("???", XXX, IMP, 7),
-    Instruction("???", NOP, IMP, 4),
+    Instruction("NOP", NOP, ABX, 4, non_standard=True),  #0x5C
     Instruction("EOR", EOR, ABX, 4),
     Instruction("LSR", LSR, ABX, 7),
     Instruction("???", XXX, IMP, 7),
 
-    Instruction("RTS", RTS, IMP, 6),
+    Instruction("RTS", RTS, IMP, 6),  # 96 0x60
     Instruction("ADC", ADC, IZX, 6),
     Instruction("???", XXX, IMP, 2),
     Instruction("???", XXX, IMP, 8),
-    Instruction("???", NOP, IMP, 3),
+    Instruction("NOP", NOP, ZP0, 3, non_standard=True),  # 0x64
     Instruction("ADC", ADC, ZP0, 3),
     Instruction("ROR", ROR, ZP0, 5),
     Instruction("???", XXX, IMP, 5),
@@ -637,31 +773,31 @@ lookup = [
     Instruction("ROR", ROR, ABS, 6),
     Instruction("???", XXX, IMP, 6),
 
-    Instruction("BVS", BVS, REL, 2),
+    Instruction("BVS", BVS, REL, 2),  # 112 0x70
     Instruction("ADC", ADC, IZY, 5),
     Instruction("???", XXX, IMP, 2),
     Instruction("???", XXX, IMP, 8),
-    Instruction("???", NOP, IMP, 4),
+    Instruction("NOP", NOP, ZPX, 4, non_standard=True),  # 0x74
     Instruction("ADC", ADC, ZPX, 4),
     Instruction("ROR", ROR, ZPX, 6),
     Instruction("???", XXX, IMP, 6),
     Instruction("SEI", SEI, IMP, 2),
     Instruction("ADC", ADC, ABY, 4),
-    Instruction("???", NOP, IMP, 2),
+    Instruction("NOP", NOP, IMP, 2, non_standard=True),
     Instruction("???", XXX, IMP, 7),
-    Instruction("???", NOP, IMP, 4),
+    Instruction("NOP", NOP, ABX, 4, non_standard=True),  # 0x7C
     Instruction("ADC", ADC, ABX, 4),
     Instruction("ROR", ROR, ABX, 7),
     Instruction("???", XXX, IMP, 7),
 
-    Instruction("???", NOP, IMP, 2),
+    Instruction("NOP", NOP, IMM, 2, non_standard=True),  # 128 0x80
     Instruction("STA", STA, IZX, 6),
     Instruction("???", NOP, IMP, 2),
-    Instruction("???", XXX, IMP, 6),
+    Instruction("SAX", SAX, IZX, 6, non_standard=True),
     Instruction("STY", STY, ZP0, 3),
     Instruction("STA", STA, ZP0, 3),
     Instruction("STX", STX, ZP0, 3),
-    Instruction("???", XXX, IMP, 3),
+    Instruction("SAX", SAX, ZP0, 3, non_standard=True),
     Instruction("DEY", DEY, IMP, 2),
     Instruction("???", NOP, IMP, 2),
     Instruction("TXA", TXA, IMP, 2),
@@ -669,16 +805,16 @@ lookup = [
     Instruction("STY", STY, ABS, 4),
     Instruction("STA", STA, ABS, 4),
     Instruction("STX", STX, ABS, 4),
-    Instruction("???", XXX, IMP, 4),
+    Instruction("SAX", SAX, ABS, 4, non_standard=True),
 
-    Instruction("BCC", BCC, REL, 2),
+    Instruction("BCC", BCC, REL, 2),  # 144 0x90
     Instruction("STA", STA, IZY, 6),
     Instruction("???", XXX, IMP, 2),
     Instruction("???", XXX, IMP, 6),
     Instruction("STY", STY, ZPX, 4),
     Instruction("STA", STA, ZPX, 4),
     Instruction("STX", STX, ZPY, 4),
-    Instruction("???", XXX, IMP, 4),
+    Instruction("SAX", SAX, ZPY, 4, non_standard=True),
     Instruction("TYA", TYA, IMP, 2),
     Instruction("STA", STA, ABY, 5),
     Instruction("TXS", TXS, IMP, 2),
@@ -688,14 +824,14 @@ lookup = [
     Instruction("???", XXX, IMP, 5),
     Instruction("???", XXX, IMP, 5),
 
-    Instruction("LDY", LDY, IMM, 2),
+    Instruction("LDY", LDY, IMM, 2),  # 160 0xA0
     Instruction("LDA", LDA, IZX, 6),
     Instruction("LDX", LDX, IMM, 2),
-    Instruction("???", XXX, IMP, 6),
+    Instruction("LAX", LAX, IZX, 6, non_standard=True),
     Instruction("LDY", LDY, ZP0, 3),
     Instruction("LDA", LDA, ZP0, 3),
     Instruction("LDX", LDX, ZP0, 3),
-    Instruction("???", XXX, IMP, 3),
+    Instruction("LAX", LAX, ZP0, 3, non_standard=True),
     Instruction("TAY", TAY, IMP, 2),
     Instruction("LDA", LDA, IMM, 2),
     Instruction("TAX", TAX, IMP, 2),
@@ -703,16 +839,16 @@ lookup = [
     Instruction("LDY", LDY, ABS, 4),
     Instruction("LDA", LDA, ABS, 4),
     Instruction("LDX", LDX, ABS, 4),
-    Instruction("???", XXX, IMP, 4),
+    Instruction("LAX", LAX, ABS, 4, non_standard=True),
 
-    Instruction("BCS", BCS, REL, 2),
+    Instruction("BCS", BCS, REL, 2),  # 176 0xB0
     Instruction("LDA", LDA, IZY, 5),
     Instruction("???", XXX, IMP, 2),
-    Instruction("???", XXX, IMP, 5),
+    Instruction("LAX", LAX, IZY, 5, non_standard=True),
     Instruction("LDY", LDY, ZPX, 4),
     Instruction("LDA", LDA, ZPX, 4),
     Instruction("LDX", LDX, ZPY, 4),
-    Instruction("???", XXX, IMP, 4),
+    Instruction("LAX", LAX, ZPY, 4, non_standard=True),  # 0xB7
     Instruction("CLV", CLV, IMP, 2),
     Instruction("LDA", LDA, ABY, 4),
     Instruction("TSX", TSX, IMP, 2),
@@ -720,12 +856,12 @@ lookup = [
     Instruction("LDY", LDY, ABX, 4),
     Instruction("LDA", LDA, ABX, 4),
     Instruction("LDX", LDX, ABY, 4),
-    Instruction("???", XXX, IMP, 4),
+    Instruction("LAX", LAX, ABY, 4, non_standard=True),
 
-    Instruction("CPY", CPY, IMM, 2),
+    Instruction("CPY", CPY, IMM, 2),  # 192 0xC0
     Instruction("CMP", CMP, IZX, 6),
     Instruction("???", NOP, IMP, 2),
-    Instruction("???", XXX, IMP, 8),
+    Instruction("DCP", DCP, IZX, 8, non_standard=True),
     Instruction("CPY", CPY, ZP0, 3),
     Instruction("CMP", CMP, ZP0, 3),
     Instruction("DEC", DEC, ZP0, 5),
@@ -739,24 +875,24 @@ lookup = [
     Instruction("DEC", DEC, ABS, 6),
     Instruction("???", XXX, IMP, 6),
 
-    Instruction("BNE", BNE, REL, 2),
+    Instruction("BNE", BNE, REL, 2),  # 208 0xD0
     Instruction("CMP", CMP, IZY, 5),
     Instruction("???", XXX, IMP, 2),
     Instruction("???", XXX, IMP, 8),
-    Instruction("???", NOP, IMP, 4),
+    Instruction("NOP", NOP, ZPX, 4, non_standard=True),
     Instruction("CMP", CMP, ZPX, 4),
     Instruction("DEC", DEC, ZPX, 6),
     Instruction("???", XXX, IMP, 6),
     Instruction("CLD", CLD, IMP, 2),
     Instruction("CMP", CMP, ABY, 4),
-    Instruction("NOP", NOP, IMP, 2),
+    Instruction("NOP", NOP, IMP, 2, non_standard=True),
     Instruction("???", XXX, IMP, 7),
-    Instruction("???", NOP, IMP, 4),
+    Instruction("NOP", NOP, ABX, 4, non_standard=True),  # 0xDC
     Instruction("CMP", CMP, ABX, 4),
     Instruction("DEC", DEC, ABX, 7),
     Instruction("???", XXX, IMP, 7),
 
-    Instruction("CPX", CPX, IMM, 2),
+    Instruction("CPX", CPX, IMM, 2),  # 224 0xE0
     Instruction("SBC", SBC, IZX, 6),
     Instruction("???", NOP, IMP, 2),
     Instruction("???", XXX, IMP, 8),
@@ -767,25 +903,25 @@ lookup = [
     Instruction("INX", INX, IMP, 2),
     Instruction("SBC", SBC, IMM, 2),
     Instruction("NOP", NOP, IMP, 2),
-    Instruction("???", SBC, IMP, 2),
+    Instruction("SBC", SBC, IMM, 2, non_standard=True),
     Instruction("CPX", CPX, ABS, 4),
     Instruction("SBC", SBC, ABS, 4),
     Instruction("INC", INC, ABS, 6),
     Instruction("???", XXX, IMP, 6),
 
-    Instruction("BEQ", BEQ, REL, 2),
+    Instruction("BEQ", BEQ, REL, 2),  # 240 0xF0
     Instruction("SBC", SBC, IZY, 5),
     Instruction("???", XXX, IMP, 2),
     Instruction("???", XXX, IMP, 8),
-    Instruction("???", NOP, IMP, 4),
+    Instruction("NOP", NOP, ZPX, 4, non_standard=True),
     Instruction("SBC", SBC, ZPX, 4),
     Instruction("INC", INC, ZPX, 6),
     Instruction("???", XXX, IMP, 6),
     Instruction("SED", SED, IMP, 2),
     Instruction("SBC", SBC, ABY, 4),
-    Instruction("NOP", NOP, IMP, 2),
+    Instruction("NOP", NOP, IMP, 2, non_standard=True),
     Instruction("???", XXX, IMP, 7),
-    Instruction("???", NOP, IMP, 4),
+    Instruction("NOP", NOP, ABX, 4, non_standard=True),  # 0xFC
     Instruction("SBC", SBC, ABX, 4),
     Instruction("INC", INC, ABX, 7),
     Instruction("???", XXX, IMP, 7)
@@ -811,7 +947,7 @@ class AsmCPU:
     def get_opcode(self):
         opcode = self.cpu_read(self.pc)
         self.pc += 1
-        return opcode
+        return opcode & 0xFF
 
 
 def disassembler(bus: 'bus.Bus', from_addr, to_addr):
@@ -821,7 +957,7 @@ def disassembler(bus: 'bus.Bus', from_addr, to_addr):
         op_addr = cpu.pc & 0xffff
         opcode = cpu.get_opcode()
         instruction = lookup[opcode]
-        instruction.addr_mode(cpu)
+        instruction.addr_mode(cpu, cpu)
 
         if instruction.addr_mode == IMM:
             value = bus.cpu_read(cpu._addr_abs)
