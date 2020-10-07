@@ -41,6 +41,7 @@ class PPUStatus:
         else:
             self.reg &= ~bit
 
+
 class PPUMask:
     def __init__(self, reg):
         self.reg = 0x00

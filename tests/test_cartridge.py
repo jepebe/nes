@@ -1,5 +1,5 @@
 from cartridge import Cartridge
-from mapper import Mapper000
+from mappers import Mapper000
 
 
 def test_load():

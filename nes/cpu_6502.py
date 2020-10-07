@@ -15,9 +15,9 @@ class CPU6502State:
     clock_count: int = 0  # Number clock ticks
     opcode: int = 0x00  # Current opcode
 
-    _addr_abs: int = 0x0000
-    _addr_rel: int = 0x00
-    _cycles: int = 0
+    addr_abs: int = 0x0000
+    addr_rel: int = 0x00
+    cycles: int = 0
     _implied: int = None  # Temporary value for IMP mode
 
     def reset(self):
@@ -27,11 +27,11 @@ class CPU6502State:
         self.stkp = 0xFD
         self.status = 0x00 | Flags6502.U | Flags6502.I
 
-        self._addr_rel = 0x0000
-        self._addr_abs = 0x0000
+        self.addr_rel = 0x0000
+        self.addr_abs = 0x0000
         self._implied = None
 
-        self._cycles = 8
+        self.cycles = 8
 
     def get_flag(self, flag: int):
         return 1 if (self.status & flag) else 0
@@ -47,6 +47,9 @@ class CPU6502State:
             setattr(target, field.name, getattr(self, field.name))
 
     def print_flags(self):
+        print(self.flags_to_string())
+
+    def flags_to_string(self):
         flags = 'C' if self.get_flag(Flags6502.C) else '.'
         flags += 'Z' if self.get_flag(Flags6502.Z) else '.'
         flags += 'I' if self.get_flag(Flags6502.I) else '.'
@@ -55,14 +58,56 @@ class CPU6502State:
         flags += 'U' if self.get_flag(Flags6502.U) else '.'
         flags += 'V' if self.get_flag(Flags6502.V) else '.'
         flags += 'N' if self.get_flag(Flags6502.N) else '.'
-        print(flags)
+        return flags
 
+    def print_state(self):
+        print(f'PC: ${self.pc:04X}')
+        print(f'A: {self.a:02X}')
+        print(f'X: {self.x:02X}')
+        print(f'Y: {self.y:02X}')
+        print(f'StkP: ${self.stkp:02X}')
+        print(f'Status: [{self.flags_to_string()}]')
+        print(f'Addr. Abs.: ${self.addr_abs:04X}')
+        print(f'Addr. Rel.: ${self.addr_rel:04X}')
+        print(f'Implied val.: {self._implied}')
+
+    def check_state(self):
+        if (self.a & 0xFF00) != 0:
+            print(f'a is larger than 8 bits')
+            return False
+        if (self.x & 0xFF00) != 0:
+            print(f'x is larger than 8 bits')
+            return False
+        if (self.y & 0xFF00) != 0:
+            print(f'y is larger than 8 bits')
+            return False
+        if (self.pc & 0xFF0000) != 0:
+            print(f'pc is larger than 16 bits')
+            return False
+        if (self.addr_abs & 0xFF0000) != 0:
+            print(f'addr_abs is larger than 16 bits')
+            return False
+        if (self.addr_rel & 0xFF0000) != 0:
+            print(f'addr_rel is larger than 16 bits')
+            return False
+        if (self.addr_rel & 0xFF00) != 0:
+            if (self.addr_rel & 0xFF00) != 0xFF00:
+                print(f'addr_rel should only have 1s over 8 bits')
+                return False
+        if (self.stkp & 0xFF00) != 0:
+            print(f'stkp is larger than 8 bits')
+            return False
+        if (self.status & 0xFF00) != 0:
+            print(f'status is larger than 8 bits')
+            return False
+
+        return True
 
 
 class CPU6502:
     def __init__(self, bus):
         self.bus = bus
-        self.cpu_state = CPU6502State()
+        self.state = CPU6502State()
 
         # local import due to cycle in my imports
         import _opcodes_6502
@@ -80,69 +125,80 @@ class CPU6502:
         return self.bus.cpu_read_2(addr)
 
     def complete(self):
-        return self.cpu_state._cycles == 0
+        return self.state.cycles == 0
 
     def clock(self):
-        cpu_state = self.cpu_state
-        if cpu_state._cycles == 0:
-            opcode = self.cpu_read(cpu_state.pc)
-            cpu_state.pc += 1
-            self.cpu_state.opcode = opcode
-            self.cpu_state._implied = None
+        state = self.state
+        if state.cycles == 0:
+            opcode = self.cpu_read(state.pc)
+            state.pc += 1
+            state.opcode = opcode
+            state._implied = None
             instruction = self.OPCODES[opcode]
-            cpu_state._cycles = instruction.cycles
-            additional_cycle1 = instruction.addr_mode(cpu_state, self)
-            additional_cycle2 = instruction.operate(cpu_state, self)
+            state.cycles = instruction.cycles
+            additional_cycle1 = instruction.addr_mode(self)
+            additional_cycle2 = instruction.operate(self)
 
-            cpu_state._cycles += (additional_cycle1 & additional_cycle2)
+            state.cycles += (additional_cycle1 & additional_cycle2)
 
-        cpu_state._cycles -= 1
-        cpu_state.clock_count += 1
+        state.cycles -= 1
+        state.clock_count += 1
 
     def fetch(self):
-        if self.cpu_state._implied is not None:
-            return self.cpu_state._implied
+        if self.state._implied is not None:
+            return self.state._implied
         else:
-            return self.cpu_read(self.cpu_state._addr_abs)
+            return self.cpu_read(self.state.addr_abs)
 
     def reset(self):
-        self.cpu_state.reset()
-        self._load_program_counter_from_addr(0xFFFC)
+        self.state.reset()
+        self.load_program_counter_from_addr(0xFFFC)
 
     def irq(self):
-        if not self.cpu_state.get_flag(Flags6502.I):
-            self._push_program_counter_on_stack()
-            self._push_interrupt_state_on_stack()
-            self._load_program_counter_from_addr(0xFFFE)
-            self.cpu_state._cycles = 7
+        if not self.state.get_flag(Flags6502.I):
+            self.push_program_counter_on_stack()
+            self.push_interrupt_state_on_stack()
+            self.load_program_counter_from_addr(0xFFFE)
+            self.state.cycles = 7
 
     def nmi(self):
-        self._push_program_counter_on_stack()
-        self._push_interrupt_state_on_stack()
-        self._load_program_counter_from_addr(0xFFFA)
-        self.cpu_state._cycles = 8
+        self.push_program_counter_on_stack()
+        self.push_interrupt_state_on_stack()
+        self.load_program_counter_from_addr(0xFFFA)
+        self.state.cycles = 8
 
-    def _push_interrupt_state_on_stack(self):
-        self.cpu_state.set_flag(Flags6502.B, 0)
-        self.cpu_state.set_flag(Flags6502.U, 1)
-        self.cpu_state.set_flag(Flags6502.I, 1)
-        self.cpu_write(0x0100 + self.cpu_state.stkp, self.cpu_state.status & 0x00ff)
-        self.cpu_state.stkp -= 1
+    def push_interrupt_state_on_stack(self):
+        self.state.set_flag(Flags6502.B, 0)
+        self.state.set_flag(Flags6502.U, 1)
+        self.state.set_flag(Flags6502.I, 1)
+        self.cpu_write(0x0100 + self.state.stkp, self.state.status & 0x00ff)
+        self.state.stkp -= 1
 
-    def _push_program_counter_on_stack(self):
-        self.cpu_write(0x0100 + self.cpu_state.stkp, (self.cpu_state.pc >> 8) & 0x00ff)
-        self.cpu_state.stkp -= 1
-        self.cpu_write(0x0100 + self.cpu_state.stkp, self.cpu_state.pc & 0x00ff)
-        self.cpu_state.stkp -= 1
+    def push_program_counter_on_stack(self):
+        self.cpu_write(0x0100 + self.state.stkp, (self.state.pc >> 8) & 0x00ff)
+        self.state.stkp -= 1
+        self.cpu_write(0x0100 + self.state.stkp, self.state.pc & 0x00ff)
+        self.state.stkp -= 1
 
-    def _load_program_counter_from_addr(self, addr):
+    def load_program_counter_from_addr(self, addr):
         lo = self.cpu_read(addr)
         hi = self.cpu_read(addr + 1)
-        self.cpu_state.pc = (hi << 8) | lo
+        self.state.pc = (hi << 8) | lo
 
-    def _pop_program_counter_from_stack(self):
-        self.cpu_state.stkp += 1
-        lo = self.cpu_read(0x0100 + self.cpu_state.stkp) & 0xff
-        self.cpu_state.stkp += 1
-        hi = self.cpu_read(0x0100 + self.cpu_state.stkp) & 0xff
-        self.cpu_state.pc = (hi << 8) | lo
+    def pop_program_counter_from_stack(self):
+        self.state.stkp += 1
+        lo = self.cpu_read(0x0100 + self.state.stkp) & 0xff
+        self.state.stkp += 1
+        hi = self.cpu_read(0x0100 + self.state.stkp) & 0xff
+        self.state.pc = (hi << 8) | lo
+
+    def push_value_on_stack(self, value):
+        self.cpu_write(0x0100 + self.state.stkp, value & 0xFF)
+        self.state.stkp -= 1
+        self.state.stkp &= 0xFF
+
+    def pop_value_from_stack(self):
+        self.state.stkp += 1
+        self.state.stkp &= 0xFF
+        return self.cpu_read(0x0100 + self.state.stkp) & 0xFF
+

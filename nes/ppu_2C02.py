@@ -1,3 +1,6 @@
+from dataclasses import dataclass
+from typing import List
+
 import numpy as np
 
 from _nes_palette import _create_palette
@@ -9,6 +12,27 @@ def _create_sprite(w, h):
     array = np.arange(w * h * 3, dtype=np.uint8)
     array.shape = h, w, 3
     return array
+
+
+def _reverse_byte(b):
+    b = (b & 0xF0) >> 4 | (b & 0x0F) << 4
+    b = (b & 0xCC) >> 2 | (b & 0x33) << 2
+    b = (b & 0xAA) >> 1 | (b & 0x55) << 1
+    return b
+
+
+@dataclass
+class OAMAttributeEntry:
+    y: int = 0xFF  # Y position of sprite
+    id: int = 0xFF  # ID of tile from pattern memory
+    attribute: int = 0xFF  # Flags define how sprite should be rendered
+    x: int = 0xFF  # X position of sprite
+
+    def reset(self):
+        self.x = 0xFF
+        self.id = 0xFF
+        self.attribute = 0xFF
+        self.y = 0xFF
 
 
 class PPU2C02:
@@ -26,6 +50,16 @@ class PPU2C02:
         self._vram_addr = LoopyRegister(0x0000)
         self._tram_addr = LoopyRegister(0x0000)
         self._fine_x = 0x00
+
+        self._oam = [0x00] * 64 * 4  # 4 bytes per OAM
+        self._oam_addr = 0x00
+        self._sprite_scanline = [OAMAttributeEntry() for _ in range(8)]
+        self._sprite_count = 0x00
+        self._spr_shifter_ptrn_lo = [0x00] * 8
+        self._spr_shifter_ptrn_hi = [0x00] * 8
+
+        self._spr_zero_hit_possible = False
+        self._spr_zero_being_rendered = False
 
         self._bg_next_tile_id = 0x00
         self._bg_next_tile_attrib = 0x00
@@ -64,10 +98,10 @@ class PPU2C02:
             pass
 
         elif addr == 0x0003:  # OAM Address
-            pass
+            self._oam_addr = data
 
         elif addr == 0x0004:  # OAM Data
-            pass
+            self._oam[self._oam_addr] = data
 
         elif addr == 0x0005:  # Scroll
             if self._address_latch == 0:
@@ -106,7 +140,7 @@ class PPU2C02:
         elif addr == 0x0003:  # OAM Address
             pass
         elif addr == 0x0004:  # OAM Data
-            pass
+            data = self._oam[self._oam_addr]
         elif addr == 0x0005:  # Scroll
             pass
         elif addr == 0x0006:  # PPU Address
@@ -130,6 +164,8 @@ class PPU2C02:
         elif 0x0000 <= addr <= 0x1FFF:
             self.pattern_table[(addr & 0x1000) >> 12][addr & 0x0FFF] = data
         elif 0x2000 <= addr <= 0x3EFF:
+            if 0x2001 <= addr <= 0x2003:
+                print(f'writing ${addr:04X} <- {data:02X}')
             addr &= 0x0FFF
             if self.cart.mirror == Mirror.VERTICAL:
                 if 0x0000 <= addr <= 0x03FF:
@@ -167,12 +203,12 @@ class PPU2C02:
         data = 0x00
         addr &= 0x3FFF
 
-        cart_data = self.cart.ppu_read(addr)
-        if cart_data is not None:
+        if (cart_data := self.cart.ppu_read(addr)) is not None:
             data = cart_data
         elif 0x0000 <= addr <= 0x1FFF:
             data = self.pattern_table[(addr & 0x1000) >> 12][addr & 0x0FFF]
         elif 0x2000 <= addr <= 0x3EFF:
+            taddr = addr
             addr &= 0x0FFF
             if self.cart.mirror == Mirror.VERTICAL:
                 if 0x0000 <= addr <= 0x03FF:
@@ -193,7 +229,8 @@ class PPU2C02:
                     data = self.name_table[1][addr & 0x3FF]
                 if 0x0C00 <= addr <= 0x0FFF:
                     data = self.name_table[1][addr & 0x3FF]
-
+            if 0x2001 <= addr <= 0x2003:
+                print(f'reading ${taddr:04X} = {data:02X}')
         elif 0x3F00 <= addr <= 0x3FFF:
             addr &= 0x001F
             if addr == 0x0010:
@@ -226,7 +263,7 @@ class PPU2C02:
                     tile_lsb = self.ppu_read(i * 0x1000 + offset + row)
                     tile_msb = self.ppu_read(i * 0x1000 + offset + row + 8)
                     for col in range(0, 8):
-                        pixel = (tile_lsb & 0x01) + (tile_msb & 0x01)
+                        pixel = ((tile_lsb & 0x01) << 1) | (tile_msb & 0x01)
                         tile_lsb >>= 1
                         tile_msb >>= 1
                         x = tile_x * 8 + (7 - col)
@@ -251,6 +288,12 @@ class PPU2C02:
 
             if scanline == -1 and cycle == 1:
                 self._status.vertical_blank = 0
+                self._status.sprite_zero_hit = 0
+                self._status.sprite_overflow = 0
+
+                for i in range(8):
+                    self._spr_shifter_ptrn_lo[i] = 0x00
+                    self._spr_shifter_ptrn_hi[i] = 0x00
 
             if 2 <= cycle < 258 or 321 <= cycle < 338:
                 update_shifters(self, self._mask)
@@ -302,8 +345,33 @@ class PPU2C02:
                 load_background_shifters(self)
                 transfer_address_x(self._vram_addr, self._tram_addr, self._mask)
 
+            # Superfluous reads of tile id at end of scanline
+            if cycle == 338 or cycle == 340:
+                addr = 0x2000 | (vram.reg & 0x0FFF)
+                self._bg_next_tile_id = self.ppu_read(addr)
+
             if scanline == -1 and 280 <= cycle < 305:
                 transfer_address_y(self._vram_addr, self._tram_addr, self._mask)
+
+            # Foreground rendering ---------------------------
+            self.sprite_evaluation(cycle, scanline)
+
+            if cycle == 340:
+                for i in range(self._sprite_count):
+                    oam = self._sprite_scanline[i]
+
+                    spr_ptrn_addr_lo = self.get_sprite_pattern_addr_lo(oam, scanline)
+                    spr_ptrn_addr_hi = spr_ptrn_addr_lo + 8
+                    spr_ptrn_bits_lo = self.ppu_read(spr_ptrn_addr_lo)
+                    spr_ptrn_bits_hi = self.ppu_read(spr_ptrn_addr_hi)
+
+                    if oam.attribute & 0x40:
+                        # flip patterns horizontally
+                        spr_ptrn_bits_lo = _reverse_byte(spr_ptrn_bits_lo)
+                        spr_ptrn_bits_hi = _reverse_byte(spr_ptrn_bits_hi)
+
+                    self._spr_shifter_ptrn_lo[i] = spr_ptrn_bits_lo
+                    self._spr_shifter_ptrn_hi[i] = spr_ptrn_bits_hi
 
         if scanline == 240:
             # post render scanline
@@ -328,9 +396,56 @@ class PPU2C02:
             bg_pal1 = 1 if (self._bg_shifter_attrib_hi & bit_mux) > 0 else 0
             bg_palette = (bg_pal1 << 1) | bg_pal0
 
-        if 0 <= scanline < 240 and 2 <= cycle < 258:
-            color = self.get_color_from_palette_ram(bg_palette, bg_pixel)
-            self.spr_screen[scanline, cycle - 2] = color
+        fg_pixel = 0x00
+        fg_palette = 0x00
+        fg_priority = 0x00
+
+        if self._mask.render_sprites:
+            self._spr_zero_being_rendered = False
+            for i in range(self._sprite_count):
+                oam = self._sprite_scanline[i]
+                if oam.x == 0:
+                    fg_pixel_lo = 1 if (self._spr_shifter_ptrn_lo[i] & 0x80) > 0 else 0
+                    fg_pixel_hi = 1 if (self._spr_shifter_ptrn_hi[i] & 0x80) > 0 else 0
+                    fg_pixel = (fg_pixel_hi << 1) | fg_pixel_lo
+
+                    fg_palette = (oam.attribute & 0x03) + 0x04
+                    fg_priority = 1 if (oam.attribute & 0x20) == 0 else 0
+
+                    if fg_pixel != 0:
+                        if i == 0:
+                            self._spr_zero_being_rendered = True
+                        break
+
+        pixel = 0x00  # the FINAL Pixel
+        palette = 0x00  # the FINAL Palette
+
+        if bg_pixel == 0 and fg_pixel == 0:
+            pixel = 0x00
+            palette = 0x00
+        elif bg_pixel == 0 and fg_pixel > 0:
+            pixel = fg_pixel
+            palette = fg_palette
+        elif bg_pixel > 0 and fg_pixel == 0:
+            pixel = bg_pixel
+            palette = bg_palette
+        elif bg_pixel > 0 and fg_pixel > 0:
+            pixel = fg_pixel if fg_priority else bg_pixel
+            palette = fg_palette if fg_priority else bg_palette
+
+            mask = self._mask
+            if self._spr_zero_hit_possible and self._spr_zero_being_rendered:
+                if mask.render_background and mask.render_sprites:
+                    if not (mask.render_background_left | mask.render_sprites_left):
+                        if 9 <= cycle < 258:
+                            self._status.sprite_zero_hit = 1
+                    else:
+                        if 1 <= cycle < 258:
+                            self._status.sprite_zero_hit = 1
+
+        if 0 <= scanline < 240 and 1 <= cycle < 257:
+            color = self.get_color_from_palette_ram(palette, pixel)
+            self.spr_screen[scanline, cycle - 1] = color
 
         self._cycle += 1
         if self._cycle >= 341:
@@ -340,6 +455,90 @@ class PPU2C02:
                 self._scanline = -1
                 self.frame_complete = True
                 self.frame_count += 1
+
+    def get_sprite_pattern_addr_lo(self, oam, scanline):
+        if not self._control.sprite_size:
+            # 8x8 sprite mode - control register determines the pattern tbl
+
+            if not oam.attribute & 0x80:
+                # not flipped
+                spr_ptrn_addr_lo = (
+                        (self._control.pattern_sprite << 12)
+                        | (oam.id << 4)
+                        | (scanline - oam.y)
+                )
+
+            else:
+                # flipped vertically
+                spr_ptrn_addr_lo = (
+                        (self._control.pattern_sprite << 12)
+                        | (oam.id << 4)
+                        | (7 - (scanline - oam.y))
+                )
+        else:
+            # 8x16 sprite mode - sprite attribute determines the pattern tbl
+            if not oam.attribute & 0x80:
+                # not flipped
+                if (scanline - oam.y) < 8:
+                    # Reading top half of tile
+                    spr_ptrn_addr_lo = (
+                            ((oam.id & 0x01) << 12)
+                            | ((oam.id & 0xFE) << 4)
+                            | ((scanline - oam.y) & 0x07)
+                    )
+                else:
+                    # reading bottom half of tile
+                    spr_ptrn_addr_lo = (
+                            ((oam.id & 0x01) << 12)
+                            | (((oam.id & 0xFE) + 1) << 4)
+                            | ((scanline - oam.y) & 0x07)
+                    )
+            else:
+                # flipped vertically
+                if (scanline - oam.y) < 8:
+                    # Reading top half of tile
+                    spr_ptrn_addr_lo = (
+                            ((oam.id & 0x01) << 12)
+                            | ((oam.id & 0xFE) << 4)
+                            | (7 - (scanline - oam.y) & 0x07)
+                    )
+                else:
+                    # reading bottom half of tile
+                    spr_ptrn_addr_lo = (
+                            ((oam.id & 0x01) << 12)
+                            | (((oam.id & 0xFE) + 1) << 4)
+                            | (7 - (scanline - oam.y) & 0x07)
+                    )
+        return spr_ptrn_addr_lo
+
+    def sprite_evaluation(self, cycle, scanline):
+        if cycle == 257 and scanline >= 0:
+            self._sprite_count = 0
+            for oam in self._sprite_scanline:
+                oam.reset()
+
+            oam_entry = 0
+            self._spr_zero_hit_possible = False
+            sprite_size = 16 if self._control.sprite_size else 8
+            while oam_entry < 64 and self._sprite_count < 9:
+                y = self._oam[oam_entry * 4]
+                id = self._oam[oam_entry * 4 + 1]
+                attr = self._oam[oam_entry * 4 + 2]
+                x = self._oam[oam_entry * 4 + 3]
+                diff = scanline - y
+
+                if 0 <= diff < sprite_size:
+                    if self._sprite_count < 8:
+                        if oam_entry == 0:
+                            self._spr_zero_hit_possible = True
+
+                        self._sprite_scanline[self._sprite_count].y = y
+                        self._sprite_scanline[self._sprite_count].id = id
+                        self._sprite_scanline[self._sprite_count].attribute = attr
+                        self._sprite_scanline[self._sprite_count].x = x
+                        self._sprite_count += 1
+                oam_entry += 1
+            self._status.sprite_overflow = 1 if self._sprite_count > 8 else 0
 
 
 def increment_scroll_x(vram: LoopyRegister, mask: PPUMask):
@@ -397,3 +596,13 @@ def update_shifters(ppu: PPU2C02, mask: PPUMask):
         ppu._bg_shifter_ptrn_hi <<= 1
         ppu._bg_shifter_attrib_lo <<= 1
         ppu._bg_shifter_attrib_hi <<= 1
+
+    if mask.render_sprites and 1 <= ppu._cycle < 258:
+        for i in range(ppu._sprite_count):
+            oam = ppu._sprite_scanline[i]
+            if oam.x > 0:
+                oam.x -= 1
+            else:
+                ppu._spr_shifter_ptrn_lo[i] <<= 1
+                ppu._spr_shifter_ptrn_hi[i] <<= 1
+

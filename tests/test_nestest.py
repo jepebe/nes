@@ -27,17 +27,14 @@ def yellow(text):
     return color(text, 226)
 
 
-def print_context(results, index, instruction, mock_cpu, expected_line):
-    for i in range(max(index - 25, 0), index + 1):
+def print_context(results, index, expected_line, lines=25):
+    for i in range(max(index - lines, 0), index + 1):
         result = results[i]
         text = f'{i + 1:<3} -> {result}'
         if i == index:
             text = red(text)
         print(text)
     print(green(f'{index + 1:<3} -> {expected_line}'))
-    mock_cpu.cpu_state.print_flags()
-    print(instruction.name, instruction.addr_mode.__name__,
-          f'{mock_cpu.cpu_state._addr_abs:04X}')
 
 
 @pytest.fixture
@@ -51,7 +48,8 @@ class CPU:
     def __init__(self, bus):
         self.bus = bus
         self.fetches = []
-        self.cpu_state = CPU6502State()
+        self.state = CPU6502State()
+        self.state.reset()
 
     def cpu_read(self, addr):
         value = self.bus.cpu_read(addr)
@@ -65,7 +63,7 @@ class CPU:
         return lo, hi
 
     def reset(self):
-        self.bus.cpu.cpu_state.copy_to(self.cpu_state)
+        self.bus.cpu.state.copy_to(self.state)
         self.fetches.clear()
 
 
@@ -98,27 +96,29 @@ def test_nesttest(expected):
     mock_cpu = CPU(nes)
 
     results = {}
-    print('\n### Nestest ###')
+    cycle_errors = 0
+    test_line_count = len(expected)
+    print(f'\n### Nestest lines={test_line_count} ###')
     for index, expected_line in enumerate(expected):
         mock_cpu.reset()
 
-        pc = nes.cpu.cpu_state.pc
-        a = nes.cpu.cpu_state.a
-        x = nes.cpu.cpu_state.x
-        y = nes.cpu.cpu_state.y
-        p = nes.cpu.cpu_state.status
-        sp = nes.cpu.cpu_state.stkp
-        cycle_count = nes.cpu.cpu_state.clock_count
+        pc = nes.cpu.state.pc
+        a = nes.cpu.state.a & 0xFF
+        x = nes.cpu.state.x
+        y = nes.cpu.state.y
+        p = nes.cpu.state.status
+        sp = nes.cpu.state.stkp
+        cycle_count = nes.cpu.state.clock_count
         ppu_cycle = nes.ppu._cycle
         ppu_scanline = nes.ppu._scanline
 
         opcode = nes.cpu.cpu_read(pc)
-        mock_cpu.cpu_state.pc += 1
+        mock_cpu.state.pc += 1
         instruction = nes.cpu.OPCODES[opcode]
 
-        instruction.addr_mode(mock_cpu.cpu_state, mock_cpu)
+        instruction.addr_mode(mock_cpu)
 
-        address = create_address_line(nes, mock_cpu, instruction, opcode)
+        address = create_address_line(nes, mock_cpu, instruction)
         op_name = f'{instruction.name} {address}'
 
         op_bytes = f'{opcode:02X}'
@@ -131,24 +131,36 @@ def test_nesttest(expected):
                   f'PPU:{ppu_scanline:>3},{ppu_cycle:>3} CYC:{cycle_count}')
 
         results[index] = result
-        if not result[:78] == expected_line[:78]:
-            print_context(results, index, instruction, mock_cpu, expected_line)
 
-        assert result[:78] == expected_line[:78]
-        # print(f'{nes.cpu_read(0xc002):02X} {nes.cpu_read(0xc002):02X}')
-        # assert nes.cpu_read(0xc002) == 0x00
+        if not result[:78] == expected_line[:78]:
+            print_context(results, index, expected_line, 25)
+            mock_cpu.state.print_flags()
+
+        if result[78:] != expected_line[78:]:
+            cycle_errors += 1
+
+        error_msg = f'Line {index + 1} did not match the expected result!'
+        assert result[:78] == expected_line[:78], error_msg
+        # assert result == expected_line  # strict (includes cycles, scanline and clock)
+
         try:
             clock(nes)
         except TypeError:
             msg = f'Operator {instruction.operate.__name__} not implemented!'
             print(red(msg))
-            print_context(results, index, instruction, mock_cpu, expected_line)
+            print_context(results, index, expected_line)
             raise UserWarning(msg)
 
+    error_1 = nes.cpu_read(0x0002)
+    error_2 = nes.cpu_read(0x0003)
+    msg = f'Error codes: 0x02 = 0x{error_1:02X} 0x03 = 0x{error_2:02X} (nestest.txt)'
+    assert error_1 == 0x00 and error_2 == 0x00, msg
+    print(f'Total number of cycle errors: {cycle_errors}')
 
-def create_address_line(nes, mock_cpu, instruction, opcode):
+
+def create_address_line(nes, mock_cpu, instruction):
     if instruction.addr_mode == IMM:
-        value = nes.cpu.cpu_read(mock_cpu.cpu_state.pc - 1)
+        value = nes.cpu.cpu_read(mock_cpu.state.pc - 1)
         mock_cpu.fetches.append(value)
         address = f'#${value:02X}'
 
@@ -159,23 +171,23 @@ def create_address_line(nes, mock_cpu, instruction, opcode):
 
     elif instruction.addr_mode == IZX:
         ptr = mock_cpu.fetches[0]
-        addr = mock_cpu.cpu_state._addr_abs & 0xFFFF
+        addr = mock_cpu.state.addr_abs & 0xFFFF
         value = nes.cpu.cpu_read(addr)
         dest = (mock_cpu.fetches.pop(-1) << 8) | mock_cpu.fetches.pop(-1)
-        ptr_off = (ptr + mock_cpu.cpu_state.x) & 0xFF
+        ptr_off = (ptr + mock_cpu.state.x) & 0xFF
         ptr_loc = f'(${ptr:02X},X) @'
         address = f'{ptr_loc} {ptr_off:02X} = {dest:04X} = {value:02X}'
 
     elif instruction.addr_mode == IZY:
         ptr = mock_cpu.fetches[0]
-        addr = mock_cpu.cpu_state._addr_abs & 0xFFFF
+        addr = mock_cpu.state.addr_abs & 0xFFFF
         value = nes.cpu.cpu_read(addr)
         dest = (mock_cpu.fetches.pop(-1) << 8) | mock_cpu.fetches.pop(-1)
         ptr_loc = f'(${ptr:02X})'
         address = f'{ptr_loc},Y = {dest:04X} @ {addr:04X} = {value:02X}'
 
     elif instruction.addr_mode in (ABY, ABX):
-        addr = mock_cpu.cpu_state._addr_abs & 0xFFFF
+        addr = mock_cpu.state.addr_abs & 0xFFFF
         value = nes.cpu.cpu_read(addr)
         reg = instruction.addr_mode.__name__[-1]
         dest = (mock_cpu.fetches[-1] << 8) | mock_cpu.fetches[-2]
@@ -185,39 +197,39 @@ def create_address_line(nes, mock_cpu, instruction, opcode):
         mock_cpu.fetches.pop(-1)
         mock_cpu.fetches.pop(-1)
         dest = (mock_cpu.fetches[-1] << 8) | mock_cpu.fetches[-2]
-        addr = mock_cpu.cpu_state._addr_abs & 0xFFFF
+        addr = mock_cpu.state.addr_abs & 0xFFFF
         address = f'(${dest:04X}) = {addr:04X}'
 
     elif instruction.addr_mode == ZP0:
-        addr = mock_cpu.cpu_state._addr_abs & 0x00FF
-        value = nes.cpu.cpu_read(addr)
+        addr = mock_cpu.state.addr_abs & 0x00FF
+        value = nes.cpu.cpu_read(addr) & 0xFF
         address = f'${addr :02X} = {value:02X}'
 
     elif instruction.addr_mode == ZPX:
         ptr = mock_cpu.fetches[0]
-        addr = mock_cpu.cpu_state._addr_abs & 0x00FF
+        addr = mock_cpu.state.addr_abs & 0x00FF
         value = nes.cpu.cpu_read(addr)
         address = f'${ptr:02X},X @ {addr:02X} = {value:02X}'
 
     elif instruction.addr_mode == ZPY:
         ptr = mock_cpu.fetches[0]
-        addr = mock_cpu.cpu_state._addr_abs & 0x00FF
+        addr = mock_cpu.state.addr_abs & 0x00FF
         value = nes.cpu.cpu_read(addr)
         address = f'${ptr:02X},Y @ {addr:02X} = {value:02X}'
 
     elif instruction.addr_mode == REL:
-        rel = mock_cpu.cpu_state._addr_rel & 0xFF
+        rel = mock_cpu.state.addr_rel & 0xFF
         if rel & 0x80:
             rel = -(rel ^ 0xFF) - 1
-        addr = mock_cpu.cpu_state.pc + rel
+        addr = mock_cpu.state.pc + rel
         address = f'${addr:04X}'
 
     elif instruction.addr_mode == ABS:
         if instruction.operate in (JMP, JSR):
-            address = f'${mock_cpu.cpu_state._addr_abs:04X}'
+            address = f'${mock_cpu.state.addr_abs:04X}'
         else:
-            addr = mock_cpu.cpu_state._addr_abs
-            value = nes.cpu.cpu_read(addr)
-            address = f'${addr :04X} = {value:02X}'
+            addr = mock_cpu.state.addr_abs & 0xFFFF
+            value = nes.cpu.cpu_read(addr) & 0xFF
+            address = f'${addr:04X} = {value:02X}'
 
     return address

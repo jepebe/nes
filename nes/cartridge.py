@@ -2,7 +2,7 @@ from enum import Enum
 from io import SEEK_CUR
 from typing import Union
 
-from mapper import Mapper000
+from mappers import MAPPERS
 
 
 class NesHeader:
@@ -31,10 +31,14 @@ class NesHeader:
         header.unused = f.read(5)
         return header
 
+    def cart_format(self):
+        cartridge_type = 'Unknown'
+        if self.name == b'NES\x1A':
+            cartridge_type = 'iNES'
 
-MAPPERS = {
-    0: Mapper000
-}
+        if cartridge_type == 'iNES' and (self.mapper2 & 0x0C) == 0x08:
+            cartridge_type = 'NES20'
+        return cartridge_type
 
 
 class Mirror(Enum):
@@ -56,18 +60,31 @@ class Cartridge:
         self.prg_banks = 0x00
         self.chr_banks = 0x00
         self.mapper = None
+        self._mapped_read_addr = None
 
         self.read_cartridge()
 
     def read_cartridge(self):
         with open(self.filename, 'rb') as f:
             header = NesHeader.create_header(f)
+            self.mapper_id = ((header.mapper2 >> 4) << 4) | (header.mapper1 >> 4)
+            self.mirror = Mirror(header.mapper1 & 0x01)
+
+            print(f'Cartridge: {self.filename}')
+            print(f'Type: {header.cart_format()}')
+            print(f'Mapper ID: {self.mapper_id:03d}')
+            print(f'Scrolling mode: {self.mirror.name}')
+            print(f'PRG banks: {header.prg_rom_chunks}')
+            print(f'CHR banks: {header.chr_rom_chunks}')
+
+            # if (header.tv_system2 >> 4) & 0x01:
+            if (header.mapper1 >> 1) & 0x01:
+                print(f'PRG RAM size: {header.prg_ram_size}')
+
             if header.mapper1 & 0x04:
                 print('skipping training data')
                 f.seek(512, SEEK_CUR)
 
-            self.mapper_id = ((header.mapper2 >> 4) << 4) | (header.mapper1 >> 4)
-            self.mirror = Mirror(header.mapper1 & 0x01)
             file_type = 1
 
             if file_type == 0:
@@ -75,39 +92,50 @@ class Cartridge:
             elif file_type == 1:
                 self.prg_banks = header.prg_rom_chunks
                 prg_size = self.prg_banks * 16384
+                print(f'PRG ROM size: {prg_size}')
                 data = f.read(prg_size)
                 self.prg_memory = [int(b) for b in data]
 
                 self.chr_banks = header.chr_rom_chunks
-                chr_size = self.chr_banks * 8192
-                data = f.read(chr_size)
-                self.chr_memory = [int(b) for b in data]
+                if self.chr_banks == 0:
+                    print(f'No CHR ROM creating CHR RAM @ 8192 bytes')
+                    self.chr_memory = [0x00] * 8192
+                else:
+                    chr_size = self.chr_banks * 8192
+                    print(f'CHR ROM size: {chr_size}')
+                    data = f.read(chr_size)
+                    self.chr_memory = [int(b) for b in data]
             elif file_type == 2:
                 pass
 
             self.mapper = MAPPERS[self.mapper_id](self.prg_banks, self.chr_banks)
 
     def cpu_write(self, addr: int, data: int):
-        mapped_addr = self.mapper.cpu_map_write(addr)
-        self.prg_memory[mapped_addr] = data
+        mapped_addr = self.mapper.cpu_map_write(addr, data)
+        if mapped_addr is not None:
+            self.prg_memory[mapped_addr] = data
 
-    def cpu_read(self, addr: int, read_only=False) -> int:
-        return self.prg_memory[self.mapper.cpu_map_read(addr)]
-        # return self.prg_memory[self.mapper.cpu_map[addr]]
+    def cpu_read(self, addr: int, read_only=False) -> Union[int, None]:
+        mapped_addr = self.mapper.cpu_map_read(addr)
+        if mapped_addr is not None:
+            return self.prg_memory[mapped_addr]
+        return None
 
     def cpu_read_2(self, addr: int, read_only=False) -> (int, int):
-        # return self.prg_memory[self.mapper.cpu_map_read(addr)]
-        addr1 = self.mapper.cpu_map[addr]
-        addr2 = self.mapper.cpu_map[addr + 1]
-        return self.prg_memory[addr1], self.prg_memory[addr2]
+        addr1 = self.mapper.cpu_map_read(addr)
+        addr2 = self.mapper.cpu_map_read(addr + 1)
+        if addr1 is not None and addr2 is not None:
+            return self.prg_memory[addr1], self.prg_memory[addr2]
+        return None
 
     def ppu_write(self, addr: int, data: int) -> bool:
-        if (map_addr := self.mapper.ppu_map_write(addr)) is not None:
+        map_addr = self.mapper.ppu_map_write(addr, data)
+        if map_addr is not None:
             self.chr_memory[map_addr] = data
             return True
         return False
 
-    def ppu_read(self, addr: int, read_only=False) -> Union[None, int]:
-        if (map_addr := self.mapper.ppu_map_read(addr)) is not None:
-            return self.chr_memory[map_addr]
-        return None
+    def ppu_read(self, addr: int) -> Union[int, None]:
+        mapped_addr = self.mapper.ppu_map_read(addr)
+        return self.chr_memory[mapped_addr] if mapped_addr else None
+

@@ -19,8 +19,8 @@ MONOCHROME_GREEN = (32, 180, 32, 255)
 
 class HackerWindow(pyglet.window.Window):
 
-    def __init__(self, nes: Bus, asm_map: Dict[int, str], width=800, height=500):
-        super().__init__(width, height, vsync=False)
+    def __init__(self, title, nes: Bus, asm_map: Dict[int, str], width=800, height=500):
+        super().__init__(width, height, caption=title, vsync=False)
         self.fps_display = pyglet.window.FPSDisplay(window=self)
         self.nes = nes
         self.asm_map = asm_map
@@ -46,6 +46,8 @@ class HackerWindow(pyglet.window.Window):
         nes.ppu.get_pattern_table(0, self._selected_palette)
         nes.ppu.get_pattern_table(1, self._selected_palette)
 
+        pyglet.clock.schedule_interval_soft(self.update, 1 / 60)
+
     def update(self, dt):
         if self._emulation_run:
             # if self._residual_time > 0.0:
@@ -60,7 +62,6 @@ class HackerWindow(pyglet.window.Window):
                     break
             self.nes.ppu.frame_complete = False
             self._dirty = True
-            pyglet.clock.schedule_once(self.update, 0.025)
 
     def xflipity(self, x, y, size=0):
         scale = self.scale
@@ -72,8 +73,8 @@ class HackerWindow(pyglet.window.Window):
         self._label.text = msg
         self._label.x = x
         self._label.y = y
-        self._label.font_name = 'Jetbrains Mono'
-        # self._label.font_name = 'C64 Pro Mono'
+        # self._label.font_name = 'Jetbrains Mono'
+        self._label.font_name = 'C64 Pro Mono'
         self._label.font_size = font_size
         self._label.bold = True
         self._label.color = color
@@ -103,41 +104,48 @@ class HackerWindow(pyglet.window.Window):
 
         self.clear()
 
+        nes = self.nes
         if self._dirty:
             self._dirty = False
             self._screen_sprite.dirty()
-            # nes.ppu.get_pattern_table(0, self._selected_palette)
-            # nes.ppu.get_pattern_table(1, self._selected_palette)
-            # self._pattern_table_0.dirty()
-            # self._pattern_table_1.dirty()
+            nes.ppu.get_pattern_table(0, self._selected_palette)
+            nes.ppu.get_pattern_table(1, self._selected_palette)
+            self._pattern_table_0.dirty()
+            self._pattern_table_1.dirty()
 
-        # self.draw_cpu(516, 2)
-        # self.draw_code(516, 72, 25)
+        self.draw_cpu(516, 2)
+        self.draw_code(516, 72, 25)
+        # self.draw_sprite_ids(516, 72)
 
-        # self.draw_palette(516, 338, swatch_size=7)
+        self.draw_palette(516, 338, swatch_size=7)
 
         # self.draw_ram(2, 2, 0x0000, 16, 16)
         # self.draw_ram(2, 182, 0xC000, 16, 16)
 
-        # ratio = (500 // self.scale) / (341 // self.scale)
-        # self.draw_image(self._screen_sprite, 0, 0, 2)
         self.draw_sprite(self._spr_screen, 0, 0, 2)
 
-        # self.draw_sprite(self._spr_ptrn_tbl_0, 516, 348)
-        # self.draw_sprite(self._spr_ptrn_tbl_1, 648, 348)
-        # self.draw_image(self._pattern_table_0, 516, 348)
-        # self.draw_image(self._pattern_table_1, 648, 348)
-        # self._pattern_table_0.blit(*self.xflipity(516, 348))
+        self.draw_sprite(self._spr_ptrn_tbl_0, 516, 348)
+        self.draw_sprite(self._spr_ptrn_tbl_1, 648, 348)
 
         # self.draw_name_table(0, 0)
 
         self.fps_display.draw()
 
+    def draw_sprite_ids(self, x, y):
+        nes = self.nes
+        for i in range(26):
+            spr_x = nes.ppu._oam[i * 4 + 3]
+            spr_y = nes.ppu._oam[i * 4 + 0]
+            id = nes.ppu._oam[i * 4 + 1]
+            attribute = nes.ppu._oam[i * 4 + 1]
+            spr = f'{i:02X}: ({spr_x}, {spr_y}) ID: {id:02X} AT: {attribute}'
+            self.draw_string(x, y + i * 10, spr)
+
     def draw_name_table(self, x, y):
         table = self.nes.ppu.name_table[0]
         ptrn = self.nes.ppu.spr_pattern_table[0]
         ptrns = {}
-        for id in range(16*16):
+        for id in range(16 * 16):
             sx = (id & 0x0F) << 3
             sy = ((id >> 4) & 0x0F) << 3
             view = ptrn[sy: sy + 8, sx: sx + 8]
@@ -172,10 +180,16 @@ class HackerWindow(pyglet.window.Window):
                 rect.draw()
 
     def draw_sprite(self, sprite: pyglet.sprite.Sprite, x, y, ratio=1.0):
+        gl.glPushAttrib(gl.GL_ENABLE_BIT)
+        gl.glEnable(gl.GL_TEXTURE_2D)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
+
         sprite.position = self.xflipity(x, y)
         sprite.scale_x = ratio // self.scale
         sprite.scale_y = -ratio // self.scale
         sprite.draw()
+        gl.glPopAttrib()
 
     def draw_image(self, img, x, y, ratio=1.0):
         x, y = self.xflipity(x, y, img.height * ratio)
@@ -184,10 +198,10 @@ class HackerWindow(pyglet.window.Window):
         img.blit(x, y, width=w, height=h)
 
     def _color_for_flag_state(self, flag):
-        return GREEN if self.nes.cpu.cpu_state.status & flag else RED
+        return GREEN if self.nes.cpu.state.status & flag else RED
 
     def draw_cpu(self, x, y):
-        cpu = self.nes.cpu.cpu_state
+        cpu = self.nes.cpu.state
 
         self.draw_string(x, y, 'STATUS:')
         self.draw_string(x + 64, y, "N", self._color_for_flag_state(Flags6502.N))
@@ -216,41 +230,54 @@ class HackerWindow(pyglet.window.Window):
             y += 10
 
     def draw_code(self, x, y, lines):
-        nest_state = self.nes.cpu.cpu_state.pc
-        if not nest_state in self.asm_map:
-            print(f'missing instruction {nest_state}')
-        else:
-            current_line = self.asm_map[nest_state]
-            asm_lines = [current_line]
+        nes_state = self.nes.cpu.state.pc
+        while nes_state not in self.asm_map:
+            # print(f'missing instruction {nes_state:02X}')
+            # program counter already moved ahead?
+            nes_state -= 1
 
-            count = lines
-            current = nest_state
-            while count >= 0 and current <= 0xFFFF:
-                current += 1
-                if current in self.asm_map:
-                    asm_lines.append(self.asm_map[current])
-                    count -= 1
+        current_line = self.asm_map[nes_state]
+        asm_lines = [current_line]
 
-            count = lines
-            current = nest_state
-            while count >= 0 and current >= 0x0000:
-                current -= 1
-                if current in self.asm_map:
-                    asm_lines.append(self.asm_map[current])
-                    count -= 1
+        count = lines
+        current = nes_state
+        while count >= 0 and current <= 0xFFFF:
+            current += 1
+            if current in self.asm_map:
+                asm_lines.append(self.asm_map[current])
+                count -= 1
 
-            asm_lines = list(sorted(asm_lines))
-            index = asm_lines.index(current_line)
-            from_line = max(0, index - lines // 2)
-            to_line = min(len(asm_lines), from_line + lines + 1)
+        count = lines
+        current = nes_state
+        while count >= 0 and current >= 0x0000:
+            current -= 1
+            if current in self.asm_map:
+                asm_lines.append(self.asm_map[current])
+                count -= 1
 
-            for line in asm_lines[from_line:to_line]:
-                color = YELLOW if line == current_line else MONOCHROME_GREEN
-                self.draw_string(x, y, line, color=color)
-                y += 10
+        asm_lines = list(sorted(asm_lines))
+        index = asm_lines.index(current_line)
+        from_line = max(0, index - lines // 2)
+        to_line = min(len(asm_lines), from_line + lines + 1)
+
+        for line in asm_lines[from_line:to_line]:
+            color = YELLOW if line == current_line else MONOCHROME_GREEN
+            self.draw_string(x, y, line, color=color)
+            y += 10
 
     def on_key_press(self, symbol, modifiers):
         pygkey = pyglet.window.key
+
+        nes.controller[0] = 0x00
+        nes.controller[0] |= 0x80 if symbol == pygkey.X else 0x00  # a or b
+        nes.controller[0] |= 0x40 if symbol == pygkey.Z else 0x00  # a or b
+        nes.controller[0] |= 0x20 if symbol == pygkey.A else 0x00  # select
+        nes.controller[0] |= 0x10 if symbol == pygkey.S else 0x00  # start
+        nes.controller[0] |= 0x08 if symbol == pygkey.UP else 0x00
+        nes.controller[0] |= 0x04 if symbol == pygkey.DOWN else 0x00
+        nes.controller[0] |= 0x02 if symbol == pygkey.LEFT else 0x00
+        nes.controller[0] |= 0x01 if symbol == pygkey.RIGHT else 0x00
+
         if not self._emulation_run:
             if symbol == pygkey.C:
                 while True:
@@ -262,7 +289,6 @@ class HackerWindow(pyglet.window.Window):
                     if not self.nes.cpu.complete():
                         break
                 self._dirty = True
-                pyglet.clock.schedule_once(self.update, 0)
 
             if symbol == pygkey.F:
                 while True:
@@ -275,22 +301,19 @@ class HackerWindow(pyglet.window.Window):
                         break
                 self.nes.ppu.frame_complete = False
                 self._dirty = True
-                pyglet.clock.schedule_once(self.update, 0)
 
         if symbol == pygkey.SPACE:
             self._emulation_run = not self._emulation_run
-            pyglet.clock.schedule_once(self.update, 0)
+            pyglet.clock.schedule_once(self.update, 0.1)
 
         if symbol == pygkey.R:
             self._emulation_run = False
-            self.nes.cpu.reset()
+            self.nes.reset()
             self._dirty = True
 
         if symbol == pygkey.P:
             self._selected_palette = (self._selected_palette + 1) & 0x07
             self._dirty = True
-            if not self._emulation_run:
-                pyglet.clock.schedule_once(self.update, 0)
 
         if symbol in (pygkey.ESCAPE, pygkey.Q):
             pyglet.app.exit()
@@ -298,10 +321,39 @@ class HackerWindow(pyglet.window.Window):
 
 if __name__ == '__main__':
     nes = Bus()
-    # cart = Cartridge('tests/nestest.nes')
-    cart = Cartridge('roms/donkeykong.nes')
-    # cart = Cartridge('roms/smb.nes')
-    # cart = Cartridge('roms/ducktales.nes')
+    # cart = Cartridge('tests/nestest.nes')         # 000
+    # cart = Cartridge('roms/donkeykong.nes')       # 000
+    # cart = Cartridge('roms/smb.nes')              # 000
+    # cart = Cartridge('roms/kungfu.nes')           # 000
+    # cart = Cartridge('roms/kungfueu.nes')         # 000
+    # cart = Cartridge('roms/balloonfight.nes')     # 000
+    # cart = Cartridge('roms/ducktales.nes')        # 002
+    # cart = Cartridge('roms/megaman.nes')          # 002
+    # cart = Cartridge('roms/bomber_man.nes')       # 064
+    # cart = Cartridge('roms/klax.nes')             # 064
+    # cart = Cartridge('roms/galaga.nes')           # 064
+    # cart = Cartridge('roms/smb2.nes')             # 004
+    # cart = Cartridge('roms/smb3.nes')             # 004
+    # cart = Cartridge('roms/kirbysadventure.nes')  # 004
+
+    cart = Cartridge('tests/test_roms/test_cpu_exec_space_ppuio.nes')  #
+    # cart = Cartridge('tests/test_roms/test_cpu_exec_space_apu.nes')  #
+    # cart = Cartridge('tests/test_roms/1.Branch_Basics.nes')  # passed
+    # cart = Cartridge('tests/test_roms/2.Backward_Branch.nes')  # passed
+    # cart = Cartridge('tests/test_roms/3.Forward_Branch.nes')  # passed
+    # cart = Cartridge('tests/test_roms/instructions/01-implied.nes')  # passed
+    # cart = Cartridge('tests/test_roms/instructions/02-immediate.nes')  # failed
+    # cart = Cartridge('tests/test_roms/instructions/03-zero_page.nes')  # passed
+    # cart = Cartridge('tests/test_roms/instructions/04-zp_xy.nes')  # passed
+    # cart = Cartridge('tests/test_roms/instructions/05-absolute.nes')  # passed
+    # cart = Cartridge('tests/test_roms/instructions/06-abs_xy.nes')  # failed
+    # cart = Cartridge('tests/test_roms/instructions/07-ind_x.nes')  # passed
+    # cart = Cartridge('tests/test_roms/instructions/08-ind_y.nes')  # passed
+    # cart = Cartridge('tests/test_roms/instructions/09-branches.nes')  # passed
+    # cart = Cartridge('tests/test_roms/instructions/10-stack.nes')  # passed
+    # cart = Cartridge('tests/test_roms/instructions/11-special.nes')  # failed -> bug in test?
+    # cart = Cartridge('tests/test_roms/instructions/all_instrs.nes-kopi')  # mapper 1
+    # cart = Cartridge('tests/test_roms/instructions/official_only.nes')  # mapper 1
     nes.insert_cartridge(cart)
 
     asm_map = disassembler(nes, 0x0000, 0xffff)
@@ -317,5 +369,5 @@ if __name__ == '__main__':
     # diff = time.time() - now
     # print(f'{diff} {ops / diff}')
     # print(f'Frame count: {nes.ppu.frame_count} FPS: {nes.ppu.frame_count / diff}')
-    window = HackerWindow(nes, asm_map)
+    window = HackerWindow(cart.filename, nes, asm_map)
     pyglet.app.run()
